@@ -5,6 +5,8 @@ set -euo pipefail
 filesToCompile=(
     desperate_main.c
     desperate_window.c
+    desperate_parser.c
+    yyjson.c
 )
 
 arguments=(
