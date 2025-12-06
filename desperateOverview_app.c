@@ -11,8 +11,8 @@
 #include <errno.h>
 #include <pthread.h>
 
-#include "overview_core.h"
-#include "overview_ui.h"
+#include "desperateOverview_core.h"
+#include "desperateOverview_ui.h"
 
 static pthread_t g_control_thread;
 static int g_control_sock = -1;
@@ -35,17 +35,17 @@ static void handle_control_command(const char *cmd) {
         return;
 
     if (g_ascii_strcasecmp(cmd, "SHOW") == 0) {
-        overview_ui_request_show();
+        desperateOverview_ui_request_show();
     } else if (g_ascii_strcasecmp(cmd, "HIDE") == 0) {
-        overview_ui_request_hide();
+        desperateOverview_ui_request_hide();
     } else if (g_ascii_strcasecmp(cmd, "TOGGLE") == 0) {
-        if (overview_ui_is_visible())
-            overview_ui_request_hide();
+        if (desperateOverview_ui_is_visible())
+            desperateOverview_ui_request_hide();
         else
-            overview_ui_request_show();
+            desperateOverview_ui_request_show();
     } else if (g_ascii_strcasecmp(cmd, "QUIT") == 0) {
-        overview_ui_request_hide();
-        overview_ui_request_quit();
+        desperateOverview_ui_request_hide();
+        desperateOverview_ui_request_quit();
     }
 }
 
@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--config") == 0) {
             if (i + 1 >= argc) {
-                fprintf(stderr, "overviewApp: --config requires a file path\n");
+                            fprintf(stderr, "desperateOverview: --config requires a file path\n");
                 return 1;
             }
             snprintf(g_cli_config_path, sizeof(g_cli_config_path), "%s", argv[i + 1]);
@@ -201,7 +201,7 @@ int main(int argc, char **argv) {
         } else if (strcmp(argv[i], "--toggle") == 0) {
             if (send_control_command("TOGGLE") == 0)
                 return 0;
-            fprintf(stderr, "overviewApp: no running instance, starting new overlay.\n");
+                        fprintf(stderr, "desperateOverview: no running instance, starting new overlay.\n");
             force_show_on_start = true;
             skip_notify = true;
         } else if (strcmp(argv[i], "--show") == 0) {
@@ -221,28 +221,28 @@ int main(int argc, char **argv) {
 
     gtk_init(&argc, &argv);
     const char *config_path = g_cli_config_path_set ? g_cli_config_path : NULL;
-    overview_ui_init(config_path);
+    desperateOverview_ui_init(config_path);
 
-    if (core_init(overview_ui_core_redraw_callback, NULL) != 0) {
-        overview_ui_shutdown();
+    if (core_init(desperateOverview_ui_core_redraw_callback, NULL) != 0) {
+        desperateOverview_ui_shutdown();
         return 1;
     }
-    overview_ui_sync_with_core();
+    desperateOverview_ui_sync_with_core();
 
     if (start_control_server() != 0) {
         core_shutdown();
-        overview_ui_shutdown();
+        desperateOverview_ui_shutdown();
         return 1;
     }
 
     if (force_show_on_start)
-        overview_ui_request_show();
+        desperateOverview_ui_request_show();
 
     gtk_main();
 
     stop_control_server();
     core_shutdown();
-    overview_ui_shutdown();
+    desperateOverview_ui_shutdown();
     return 0;
 }
 

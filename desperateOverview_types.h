@@ -1,15 +1,14 @@
-#ifndef OVERVIEW_TYPES_H
-#define OVERVIEW_TYPES_H
+#ifndef DESPERATEOVERVIEW_TYPES_H
+#define DESPERATEOVERVIEW_TYPES_H
 
 #include <glib.h>
 #include <stdint.h>
-#include "overview_core.h"
+#include "desperateOverview_core.h"
 
 typedef struct _GdkPixbuf GdkPixbuf;
 
 typedef struct {
     int  x, y, w, h;
-    char *label;
     char  addr[64];
     GdkPixbuf *thumb_pixbuf;
     GdkPixbuf *live_pixbuf;
@@ -26,8 +25,9 @@ typedef struct {
 typedef struct {
     int count;
     WindowInfo wins[MAX_WINS_PER_WS];
+    char name[CORE_WS_NAME_LEN];
 } WorkspaceWindows;
 
-#endif /* OVERVIEW_TYPES_H */
+#endif /* DESPERATEOVERVIEW_TYPES_H */
 
 

@@ -1,8 +1,8 @@
 #define _GNU_SOURCE
 
-#include "overview_core.h"
-#include "overview_types.h"
-#include "thumbnail_capture.h"
+#include "desperateOverview_core.h"
+#include "desperateOverview_types.h"
+#include "desperateOverview_thumbnail_capture.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,6 +19,10 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <time.h>
+#include <glib.h>
+
+#include "yyjson.h"
+#include "desperateOverview_core_json.h"
 
 static int g_mon_id        = 0;
 static int g_mon_w         = 1920;
@@ -51,68 +55,9 @@ static void core_request_redraw(void) {
         g_redraw_cb(g_redraw_user);
 }
 
-static void log_line(const char *channel, const char *direction, const char *fmt, ...) {
-    va_list ap;
-    va_start(ap, fmt);
-    fprintf(stdout, "[%s] %s: ", channel, direction);
-    vfprintf(stdout, fmt, ap);
-    fprintf(stdout, "\n");
-    fflush(stdout);
-    va_end(ap);
-}
-
-static void log_bytes(const char *channel,
-                      const char *direction,
-                      const char *label,
-                      const unsigned char *buf,
-                      size_t len) {
-    char hex[512];
-    char ascii[256];
-    size_t hpos = 0, apos = 0;
-
-    for (size_t i = 0; i < len; ++i) {
-        if (hpos + 4 >= sizeof(hex))
-            break;
-        hpos += snprintf(hex + hpos, sizeof(hex) - hpos, "%02X ", buf[i]);
-
-        if (apos + 2 >= sizeof(ascii))
-            break;
-        ascii[apos++] = (buf[i] >= 32 && buf[i] < 127) ? buf[i] : '.';
-    }
-
-    if (hpos > 0 && hex[hpos - 1] == ' ')
-        hex[hpos - 1] = '\0';
-    ascii[apos] = '\0';
-
-    log_line(channel, direction, "%s HEX: %s", label, hex);
-    log_line(channel, direction, "%s ASCII: %s", label, ascii);
-}
-
-static const char *normalize_token(const char *tok) {
-    if (!tok || !*tok)
-        return NULL;
-    if (strcmp(tok, "null") == 0)
-        return NULL;
-    return tok;
-}
-
-static char *run_cmd(const char *cmd) {
-    FILE *fp = popen(cmd, "r");
-    if (!fp) return NULL;
-    static char buf[8192];
-    size_t len = fread(buf, 1, sizeof(buf) - 1, fp);
-    buf[len] = 0;
-    pclose(fp);
-    return buf;
-}
-
 static void free_window(WindowInfo *win) {
     if (!win)
         return;
-    if (win->label) {
-        free(win->label);
-        win->label = NULL;
-    }
     if (win->thumb_b64) {
         free(win->thumb_b64);
         win->thumb_b64 = NULL;
@@ -155,35 +100,31 @@ static void ensure_workspace_name(int wsid) {
 }
 
 static void update_workspace_names(void) {
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd),
-             "hyprctl -j workspaces 2>/dev/null | "
-             "jq -r '.[] | \"\\(.id)|\\(.name)\"'");
-
-    FILE *fp = popen(cmd, "r");
-    if (!fp)
+    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j workspaces 2>/dev/null");
+    if (!doc)
         return;
 
-    char line[256];
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\r\n")] = 0;
-        if (!*line)
-            continue;
-        char *sep = strchr(line, '|');
-        if (!sep)
-            continue;
-        *sep = 0;
-        int id = atoi(line);
-        if (id <= 0 || id >= MAX_WS)
-            continue;
-        const char *name = sep + 1;
-        if (!name || !*name)
-            snprintf(g_workspace_names[id], CORE_WS_NAME_LEN, "%d", id);
-        else
-            snprintf(g_workspace_names[id], CORE_WS_NAME_LEN, "%s", name);
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_arr(root)) {
+        yyjson_doc_free(doc);
+        return;
     }
 
-    pclose(fp);
+    yyjson_val *entry;
+    size_t idx, max;
+    yyjson_arr_foreach(root, idx, max, entry) {
+        int id = desperateOverview_json_get_int(yyjson_obj_get(entry, "id"), -1);
+        if (id <= 0 || id >= MAX_WS)
+            continue;
+        yyjson_val *name_val = yyjson_obj_get(entry, "name");
+        const char *name = (name_val && yyjson_is_str(name_val)) ? yyjson_get_str(name_val) : NULL;
+        if (name && *name)
+            snprintf(g_workspace_names[id], CORE_WS_NAME_LEN, "%s", name);
+        else
+            snprintf(g_workspace_names[id], CORE_WS_NAME_LEN, "%d", id);
+    }
+
+    yyjson_doc_free(doc);
     ensure_workspace_name(g_active_ws);
 }
 
@@ -227,8 +168,8 @@ static int hypr_send_command(const char *command) {
 
     int fd = connect_unix_socket(g_hypr_sock_cmd);
     if (fd < 0) {
-        log_line("HyprlandSock", "ERROR", "connect(%s) failed: %s",
-                 g_hypr_sock_cmd, strerror(errno));
+        g_warning("desperateOverview: connect(%s) failed: %s",
+                  g_hypr_sock_cmd, strerror(errno));
         return -1;
     }
 
@@ -240,25 +181,16 @@ static int hypr_send_command(const char *command) {
     }
     payload[len] = '\0';
 
-    char printable[512];
-    snprintf(printable, sizeof(printable), "%.*s",
-             (int)(len > 0 && payload[len - 1] == '\n' ? len - 1 : len),
-             payload);
-    log_line("HyprlandSock", "OUTBOUND", "%s", printable);
-    log_bytes("HyprlandSock", "OUTBOUND", "payload", (unsigned char *)payload, (size_t)len);
-
     ssize_t w = write(fd, payload, (size_t)len);
     if (w < 0 || (size_t)w != (size_t)len) {
-        log_line("HyprlandSock", "ERROR", "write failed: %s", strerror(errno));
+        g_warning("desperateOverview: Hyprland command write failed: %s", strerror(errno));
         close(fd);
         return -1;
     }
 
     char buf[256];
-    ssize_t rr;
-    while ((rr = read(fd, buf, sizeof(buf) - 1)) > 0) {
-        buf[rr] = 0;
-        log_line("HyprlandSock", "INBOUND", "%s", buf);
+    while (read(fd, buf, sizeof(buf) - 1) > 0) {
+        /* discard response */
     }
 
     close(fd);
@@ -284,42 +216,59 @@ static void sanitize_addr(char *s) {
 }
 
 static void update_monitor_geometry(void) {
-    FILE *fp = popen(
-        "hyprctl -j monitors 2>/dev/null | "
-        "jq -r '.[] | select(.focused == true) "
-        "| \"\\(.id) \\(.width) \\(.height) \\(.x) \\(.y) \\(.transform // 0)\"'",
-        "r"
-    );
-    if (!fp)
+    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j monitors 2>/dev/null");
+    if (!doc)
         return;
 
-    int id, w, h, x, y, transform;
-    if (fscanf(fp, "%d %d %d %d %d %d", &id, &w, &h, &x, &y, &transform) == 6) {
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_arr(root)) {
+        yyjson_doc_free(doc);
+        return;
+    }
+
+    yyjson_val *entry;
+    size_t idx, max;
+    bool found = false;
+    yyjson_arr_foreach(root, idx, max, entry) {
+        if (!desperateOverview_json_is_true(yyjson_obj_get(entry, "focused")))
+            continue;
+
+        int w = desperateOverview_json_get_int(yyjson_obj_get(entry, "width"), g_mon_w);
+        int h = desperateOverview_json_get_int(yyjson_obj_get(entry, "height"), g_mon_h);
         if (w > 0 && h > 0) {
-            g_mon_id = id;
+            g_mon_id = desperateOverview_json_get_int(yyjson_obj_get(entry, "id"), g_mon_id);
             g_mon_w  = w;
             g_mon_h  = h;
-            g_mon_x  = x;
-            g_mon_y  = y;
-            g_mon_transform = transform;
+            g_mon_x  = desperateOverview_json_get_int(yyjson_obj_get(entry, "x"), g_mon_x);
+            g_mon_y  = desperateOverview_json_get_int(yyjson_obj_get(entry, "y"), g_mon_y);
+            g_mon_transform = desperateOverview_json_get_int(yyjson_obj_get(entry, "transform"), 0);
+            found = true;
+            break;
         }
     }
 
-    pclose(fp);
+    if (!found)
+        g_warning("desperateOverview: focused monitor not found in hyprctl output");
+
+    yyjson_doc_free(doc);
 }
 
 static void update_active_workspace(void) {
-    char *json = run_cmd("hyprctl -j activeworkspace 2>/dev/null");
-    if (!json)
+    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j activeworkspace 2>/dev/null");
+    if (!doc)
         return;
 
-    char *p = strstr(json, "\"id\":");
-    if (!p)
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_obj(root)) {
+        yyjson_doc_free(doc);
         return;
+    }
 
-    int id = atoi(p + 5);
+    int id = desperateOverview_json_get_int(yyjson_obj_get(root, "id"), -1);
     if (id >= 1 && id < MAX_WS)
         g_active_ws = id;
+
+    yyjson_doc_free(doc);
 }
 
 static void update_workspace_windows(void) {
@@ -329,46 +278,30 @@ static void update_workspace_windows(void) {
     WindowInfo *capture_targets[MAX_WS * MAX_WINS_PER_WS];
     int capture_count = 0;
 
-    char cmd[512];
-    snprintf(cmd, sizeof(cmd),
-             "hyprctl -j clients 2>/dev/null | "
-             "jq -r '.[] "
-             "| select(.mapped == true and .hidden == false "
-             "and .workspace.id != null) "
-             "| \"\\(.address)|\\(.workspace.id)|\\(.monitor)|"
-             "\\(.at[0])|\\(.at[1])|\\(.size[0])|\\(.size[1])|"
-             "\\(.class)|\\(.initialClass)|\\(.title)\"'");
-
-    FILE *fp = popen(cmd, "r");
-    if (!fp)
+    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j clients 2>/dev/null");
+    if (!doc)
         return;
 
-    char line[1024];
-    while (fgets(line, sizeof(line), fp)) {
-        line[strcspn(line, "\r\n")] = 0;
-        if (!*line)
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_arr(root)) {
+        yyjson_doc_free(doc);
+        return;
+    }
+
+    yyjson_val *entry;
+    size_t idx, max;
+    yyjson_arr_foreach(root, idx, max, entry) {
+        if (!desperateOverview_json_is_true(yyjson_obj_get(entry, "mapped")))
+            continue;
+        if (desperateOverview_json_is_true(yyjson_obj_get(entry, "hidden")))
             continue;
 
-        char *save = NULL;
-        char *tok  = strtok_r(line, "|", &save);
-        if (!tok)
-            continue;
-
-        char addr_clean[64];
-        snprintf(addr_clean, sizeof(addr_clean), "%s", tok);
-        sanitize_addr(addr_clean);
-
-        tok = strtok_r(NULL, "|", &save);
-        if (!tok)
-            continue;
-        int wsid = atoi(tok);
+        yyjson_val *ws_obj = yyjson_obj_get(entry, "workspace");
+        int wsid = desperateOverview_json_get_int(ws_obj ? yyjson_obj_get(ws_obj, "id") : NULL, -1);
         if (wsid <= 0 || wsid >= MAX_WS)
             continue;
 
-        tok = strtok_r(NULL, "|", &save);
-        if (!tok)
-            continue;
-        int mon = atoi(tok);
+        int mon = desperateOverview_json_get_int(yyjson_obj_get(entry, "monitor"), -1);
         if (mon != g_mon_id)
             continue;
 
@@ -376,66 +309,35 @@ static void update_workspace_windows(void) {
         if (W->count >= MAX_WINS_PER_WS)
             continue;
 
+        yyjson_val *addr_val = yyjson_obj_get(entry, "address");
+        const char *addr_raw = (addr_val && yyjson_is_str(addr_val)) ? yyjson_get_str(addr_val) : NULL;
+        if (!addr_raw || !*addr_raw)
+            continue;
+
         WindowInfo *win = &W->wins[W->count];
-
-        tok = strtok_r(NULL, "|", &save);
-        if (!tok)
+        snprintf(win->addr, sizeof(win->addr), "%s", addr_raw);
+        sanitize_addr(win->addr);
+        if (win->addr[0] == '\0' || strcmp(win->addr, "0x0") == 0)
             continue;
-        win->x = atoi(tok);
 
-        tok = strtok_r(NULL, "|", &save);
-        if (!tok)
+        if (!desperateOverview_json_get_vec2(yyjson_obj_get(entry, "at"), &win->x, &win->y))
             continue;
-        win->y = atoi(tok);
-
-        tok = strtok_r(NULL, "|", &save);
-        if (!tok)
+        if (!desperateOverview_json_get_vec2(yyjson_obj_get(entry, "size"), &win->w, &win->h))
             continue;
-        win->w = atoi(tok);
 
-        tok = strtok_r(NULL, "|", &save);
-        if (!tok)
-            continue;
-        win->h = atoi(tok);
-
-        char *classTok = strtok_r(NULL, "|", &save);
-        char *initialClassTok = strtok_r(NULL, "|", &save);
-        char *titleTok = strtok_r(NULL, "|", &save);
-        const char *classSrc = normalize_token(classTok);
-        const char *initialSrc = normalize_token(initialClassTok);
-        const char *titleSrc = normalize_token(titleTok);
-
-        if (classSrc)
-            win->class_name = strdup(classSrc);
-        else
-            win->class_name = NULL;
-
-        if (initialSrc)
-            win->initial_class = strdup(initialSrc);
-        else
-            win->initial_class = NULL;
-
-        if (titleSrc)
-            win->title = strdup(titleSrc);
-        else
-            win->title = NULL;
-
-        const char *labelSrc = classSrc ? classSrc : (initialSrc ? initialSrc : titleSrc);
-        win->label = labelSrc ? strdup(labelSrc) : NULL;
-
-        snprintf(win->addr, sizeof(win->addr), "%s", addr_clean);
+        win->class_name = desperateOverview_json_dup_str(yyjson_obj_get(entry, "class"));
+        win->initial_class = desperateOverview_json_dup_str(yyjson_obj_get(entry, "initialClass"));
+        win->title = desperateOverview_json_dup_str(yyjson_obj_get(entry, "title"));
         win->thumb_b64 = NULL;
 
-        if (win->addr[0] != '\0' && strcmp(win->addr, "0x0") != 0 &&
-            capture_count < (int)(MAX_WS * MAX_WINS_PER_WS)) {
+        if (capture_count < (int)(MAX_WS * MAX_WINS_PER_WS))
             capture_targets[capture_count++] = win;
-        }
 
         W->count++;
         used_ws[wsid] = 1;
     }
 
-    pclose(fp);
+    yyjson_doc_free(doc);
 
     capture_thumbnails_parallel(capture_targets, capture_count);
 
@@ -530,8 +432,8 @@ static void *hypr_event_thread(void *data) {
 
         int fd = connect_unix_socket(g_hypr_sock_evt);
         if (fd < 0) {
-            log_line("HyprlandSock", "ERROR", "connect(%s) failed: %s",
-                     g_hypr_sock_evt, strerror(errno));
+            g_warning("desperateOverview: event socket connect(%s) failed: %s",
+                      g_hypr_sock_evt, strerror(errno));
             sleep(1);
             continue;
         }
@@ -553,12 +455,8 @@ static void *hypr_event_thread(void *data) {
             if (!sep)
                 continue;
             *sep = 0;
-            const char *payload = sep + 2;
-
-            log_line("HyprlandSock", "INBOUND", "%s %s", line, payload);
 
             if (event_requires_refresh(line)) {
-                log_line("HyprlandSock", "INFO", "Refreshing state due to %s", line);
                 refresh_full_state();
             }
         }
@@ -577,7 +475,6 @@ static void copy_window_to_core(const WindowInfo *src, CoreWindow *dst) {
     dst->h = src->h;
     strncpy(dst->addr, src->addr, sizeof(dst->addr));
     dst->addr[sizeof(dst->addr) - 1] = '\0';
-    dst->label = src->label ? strdup(src->label) : NULL;
     dst->thumb_b64 = src->thumb_b64 ? strdup(src->thumb_b64) : NULL;
     dst->class_name = src->class_name ? strdup(src->class_name) : NULL;
     dst->initial_class = src->initial_class ? strdup(src->initial_class) : NULL;
@@ -655,8 +552,6 @@ void core_free_state(CoreState *state) {
     for (int wsid = 0; wsid < MAX_WS; ++wsid) {
         CoreWorkspace *ws = &state->workspaces[wsid];
         for (int j = 0; j < ws->count; ++j) {
-            free(ws->wins[j].label);
-            ws->wins[j].label = NULL;
             free(ws->wins[j].thumb_b64);
             ws->wins[j].thumb_b64 = NULL;
             free(ws->wins[j].class_name);
@@ -685,7 +580,6 @@ void core_move_window(const char *addr, int wsid) {
     snprintf(cmd, sizeof(cmd),
              "dispatch movetoworkspacesilent %s,address:%s",
              ws, addr_clean);
-    log_line("OverviewCore", "workspace_request", "%s", cmd);
     hypr_send_command(cmd);
 }
 

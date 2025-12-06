@@ -1,6 +1,7 @@
 #define _GNU_SOURCE
 
-#include "thumbnail_capture.h"
+#include "desperateOverview_thumbnail_capture.h"
+#include "desperateOverview_config.h"
 
 #include <errno.h>
 #include <math.h>
@@ -23,7 +24,8 @@
 #include "hyprland-toplevel-export-v1-client-protocol.h"
 
 #define THUMB_MAX_W 512
-#define MAX_CAPTURE_THREADS 4
+#define MAX_CAPTURE_THREADS_CAP 32
+#define DEFAULT_CAPTURE_THREADS 4
 
 typedef struct {
     struct wl_display *display;
@@ -49,8 +51,9 @@ typedef struct {
     WindowInfo **wins;
     int count;
     int next_index;
+    WindowCaptureTask task;
     pthread_mutex_t lock;
-} CaptureQueue;
+} TaskQueue;
 
 static char *base64_encode(const unsigned char *src, size_t len);
 static int create_shm_file(size_t size);
@@ -86,7 +89,8 @@ static void frame_handle_ready(void *data,
 static void frame_handle_failed(void *data,
                                 struct hyprland_toplevel_export_frame_v1 *frame);
 static char *capture_window_ppm_base64_ex(const char *addr_hex, uint32_t max_w);
-static void *capture_worker_thread(void *data);
+static void *task_worker_thread(void *data);
+static void run_window_tasks_parallel(WindowInfo **wins, int count, WindowCaptureTask task);
 
 static const struct wl_registry_listener reg_listener = {
     .global = reg_global,
@@ -104,30 +108,11 @@ static const struct hyprland_toplevel_export_frame_v1_listener frame_listener = 
 };
 
 void capture_thumbnails_parallel(WindowInfo **wins, int count) {
-    if (count <= 0 || !wins)
-        return;
+    run_window_tasks_parallel(wins, count, NULL);
+}
 
-    CaptureQueue queue = {
-        .wins = wins,
-        .count = count,
-        .next_index = 0
-    };
-    pthread_mutex_init(&queue.lock, NULL);
-
-    int thread_count = count < MAX_CAPTURE_THREADS ? count : MAX_CAPTURE_THREADS;
-    pthread_t threads[MAX_CAPTURE_THREADS];
-
-    for (int i = 0; i < thread_count; ++i) {
-        if (pthread_create(&threads[i], NULL, capture_worker_thread, &queue) != 0)
-            threads[i] = 0;
-    }
-
-    for (int i = 0; i < thread_count; ++i) {
-        if (threads[i])
-            pthread_join(threads[i], NULL);
-    }
-
-    pthread_mutex_destroy(&queue.lock);
+void capture_windows_parallel(WindowInfo **wins, int count, WindowCaptureTask task) {
+    run_window_tasks_parallel(wins, count, task);
 }
 
 char *capture_window_ppm_base64(const char *addr_hex) {
@@ -138,8 +123,15 @@ char *capture_window_ppm_base64_with_limit(const char *addr_hex, uint32_t max_w)
     return capture_window_ppm_base64_ex(addr_hex, max_w);
 }
 
-static void *capture_worker_thread(void *data) {
-    CaptureQueue *queue = (CaptureQueue *)data;
+static void thumbnail_task(WindowInfo *win) {
+    if (!win || !win->addr[0])
+        return;
+    free(win->thumb_b64);
+    win->thumb_b64 = capture_window_ppm_base64(win->addr);
+}
+
+static void *task_worker_thread(void *data) {
+    TaskQueue *queue = (TaskQueue *)data;
     for (;;) {
         int idx;
         pthread_mutex_lock(&queue->lock);
@@ -150,13 +142,56 @@ static void *capture_worker_thread(void *data) {
             break;
 
         WindowInfo *win = queue->wins[idx];
-        if (!win || !win->addr[0])
+        if (!win || !queue->task)
             continue;
-
-        free(win->thumb_b64);
-        win->thumb_b64 = capture_window_ppm_base64(win->addr);
+        queue->task(win);
     }
     return NULL;
+}
+
+static void run_window_tasks_parallel(WindowInfo **wins, int count, WindowCaptureTask task) {
+    if (count <= 0 || !wins)
+        return;
+
+    WindowCaptureTask effective_task = task ? task : thumbnail_task;
+    TaskQueue queue = {
+        .wins = wins,
+        .count = count,
+        .next_index = 0,
+        .task = effective_task,
+    };
+    pthread_mutex_init(&queue.lock, NULL);
+
+    const OverlayConfig *cfg = config_get();
+    int desired_threads = (cfg && cfg->thumbnail_thread_count > 0)
+                          ? (int)cfg->thumbnail_thread_count
+                          : DEFAULT_CAPTURE_THREADS;
+    if (desired_threads > MAX_CAPTURE_THREADS_CAP)
+        desired_threads = MAX_CAPTURE_THREADS_CAP;
+    int thread_count = count < desired_threads ? count : desired_threads;
+    if (thread_count <= 0)
+        thread_count = 1;
+    pthread_t threads[MAX_CAPTURE_THREADS_CAP];
+    memset(threads, 0, sizeof(threads));
+
+    for (int i = 0; i < thread_count; ++i) {
+        if (pthread_create(&threads[i], NULL, task_worker_thread, &queue) != 0) {
+            threads[i] = 0;
+            int idx;
+            pthread_mutex_lock(&queue.lock);
+            idx = queue.next_index++;
+            pthread_mutex_unlock(&queue.lock);
+            if (idx < queue.count)
+                effective_task(queue.wins[idx]);
+        }
+    }
+
+    for (int i = 0; i < thread_count; ++i) {
+        if (threads[i])
+            pthread_join(threads[i], NULL);
+    }
+
+    pthread_mutex_destroy(&queue.lock);
 }
 
 static char *base64_encode(const unsigned char *src, size_t len) {

@@ -1,5 +1,5 @@
-#ifndef OVERVIEW_CORE_H
-#define OVERVIEW_CORE_H
+#ifndef DESPERATEOVERVIEW_CORE_H
+#define DESPERATEOVERVIEW_CORE_H
 
 #include <stdbool.h>
 
@@ -15,7 +15,6 @@ extern "C" {
 typedef struct {
     int  x, y, w, h;
     char addr[64];
-    char *label;      /* caller must free copy */
     char *thumb_b64;  /* caller must free copy */
     char *class_name;
     char *initial_class;
@@ -58,6 +57,6 @@ char *core_capture_window_raw(const char *addr);
 }
 #endif
 
-#endif /* OVERVIEW_CORE_H */
+#endif /* DESPERATEOVERVIEW_CORE_H */
 
 

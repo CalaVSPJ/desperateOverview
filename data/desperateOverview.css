@@ -1,0 +1,15 @@
+.desperateOverview-status {
+  color: #c9d7ff;
+  font-weight: 600;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.55);
+}
+
+.desperateOverview-ghost {
+  opacity: 0.75;
+  transition: opacity 120ms ease;
+}
+
+.desperateOverview-ghost:hover {
+  opacity: 1.0;
+}
+
