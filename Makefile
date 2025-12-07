@@ -3,76 +3,105 @@ PKG_CONFIG ?= pkg-config
 WAYLAND_SCANNER ?= wayland-scanner
 PREFIX ?= /usr/local
 BINDIR ?= $(PREFIX)/bin
-YYJSON_DIR ?= ../yyjson-0.10.0/src
+
+SRC_DIR := src
+INC_DIR := include
+PROTO_DIR := protocols
+PROTO_GEN_DIR := $(PROTO_DIR)/generated
+VENDOR_DIR := vendor
+YYJSON_VERSION ?= 0.10.0
+YYJSON_DIR ?= $(VENDOR_DIR)/yyjson-$(YYJSON_VERSION)
+YYJSON_SRC := $(YYJSON_DIR)/src/yyjson.c
+YYJSON_VENDOR_FETCH := 0
+ifneq (,$(filter $(VENDOR_DIR)/%,$(YYJSON_DIR)))
+YYJSON_VENDOR_FETCH := 1
+YYJSON_ARCHIVE := $(VENDOR_DIR)/yyjson-$(YYJSON_VERSION).tar.gz
+YYJSON_STAMP := $(YYJSON_DIR)/.fetched
+YYJSON_URL := https://github.com/ibireme/yyjson/archive/refs/tags/$(YYJSON_VERSION).tar.gz
+endif
 
 PKGS = gtk+-3.0 gtk-layer-shell-0 gdk-pixbuf-2.0 wayland-client
 PKG_CFLAGS := $(shell $(PKG_CONFIG) --cflags $(PKGS))
 PKG_LIBS := $(shell $(PKG_CONFIG) --libs $(PKGS))
 
-CPPFLAGS += $(PKG_CFLAGS) -I$(YYJSON_DIR)
+CPPFLAGS += $(PKG_CFLAGS) -I$(INC_DIR) -I$(PROTO_GEN_DIR) -I$(YYJSON_DIR)/src
 CFLAGS ?= -Wall -Wextra -O2
 LDFLAGS += $(PKG_LIBS)
 
 PROTO_XML := \
-	protocols/hyprland-toplevel-export-v1.xml \
-	protocols/wlr-foreign-toplevel-management-unstable-v1.xml
+	$(PROTO_DIR)/hyprland-toplevel-export-v1.xml \
+	$(PROTO_DIR)/wlr-foreign-toplevel-management-unstable-v1.xml
 
-PROTO_BASENAMES := $(notdir $(PROTO_XML:.xml=))
-PROTO_HEADERS := $(addsuffix -client-protocol.h,$(PROTO_BASENAMES))
-PROTO_SOURCES := $(addsuffix -protocol.c,$(PROTO_BASENAMES))
+PROTO_HEADERS := \
+	$(PROTO_GEN_DIR)/hyprland-toplevel-export-v1-client-protocol.h \
+	$(PROTO_GEN_DIR)/wlr-foreign-toplevel-management-unstable-v1-client-protocol.h
 
-LOCAL_SRCS := \
-	desperateOverview_core.c \
-	desperateOverview_core_state.c \
-	desperateOverview_core_ipc.c \
-	desperateOverview_core_json.c \
-	desperateOverview_thumbnail_capture.c \
-	desperateOverview_geometry.c \
-	desperateOverview_config.c \
-	desperateOverview_ui_drag.c \
-	desperateOverview_ui_drawing.c \
-	desperateOverview_ui_render.c \
-	desperateOverview_ui_layout.c \
-	desperateOverview_ui_state.c \
-	desperateOverview_ui_events.c \
-	desperateOverview_ui_css.c \
-	desperateOverview_ui_live.c \
-	desperateOverview_ui_thumb_cache.c \
-	desperateOverview_ui.c \
-	desperateOverview_app.c
+PROTO_SOURCES := \
+	$(PROTO_GEN_DIR)/hyprland-toplevel-export-v1-protocol.c \
+	$(PROTO_GEN_DIR)/wlr-foreign-toplevel-management-unstable-v1-protocol.c
 
-SRCS := $(LOCAL_SRCS) $(PROTO_SOURCES)
-OBJS := $(SRCS:.c=.o) yyjson.o
+SRCS := $(wildcard $(SRC_DIR)/*.c) $(PROTO_SOURCES) $(YYJSON_SRC)
+OBJS := $(SRCS:.c=.o)
+
+TARGET := desperateOverview
 
 .PHONY: all clean install uninstall deps
 
-all: desperateOverview
+all: $(TARGET)
 
-desperateOverview: deps $(PROTO_HEADERS) $(PROTO_SOURCES) $(OBJS)
+$(TARGET): deps $(PROTO_HEADERS) $(PROTO_SOURCES) $(OBJS)
 	$(CC) $(CFLAGS) -o $@ $(OBJS) $(LDFLAGS)
 
 deps:
 	@$(PKG_CONFIG) --exists $(PKGS) || \
 		(echo "Missing required packages: $(PKGS)" >&2 && exit 1)
 
-yyjson.o: $(YYJSON_DIR)/yyjson.c
+$(SRC_DIR)/%.o: $(SRC_DIR)/%.c | $(YYJSON_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-%.o: %.c
+$(PROTO_GEN_DIR)/%.o: $(PROTO_GEN_DIR)/%.c | $(YYJSON_SRC)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 
-%-client-protocol.h: protocols/%.xml
+YYJSON_CLEAN_CMD :=
+ifeq ($(YYJSON_VENDOR_FETCH),1)
+$(YYJSON_SRC): | $(YYJSON_STAMP)
+
+$(YYJSON_ARCHIVE):
+	@mkdir -p $(VENDOR_DIR)
+	curl -L "$(YYJSON_URL)" -o "$@"
+
+$(YYJSON_STAMP): $(YYJSON_ARCHIVE)
+	tar -xzf $< -C $(VENDOR_DIR)
+	touch $@
+
+YYJSON_CLEAN_CMD = \
+	$(RM) $(YYJSON_ARCHIVE); \
+	if [ -d "$(YYJSON_DIR)" ]; then rm -rf "$(YYJSON_DIR)"; fi
+else
+$(YYJSON_SRC):
+	@true
+endif
+
+$(YYJSON_DIR)/src/yyjson.o: $(YYJSON_SRC)
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+
+$(PROTO_GEN_DIR)/%-client-protocol.h: $(PROTO_DIR)/%.xml
+	@mkdir -p $(PROTO_GEN_DIR)
 	$(WAYLAND_SCANNER) client-header $< $@
 
-%-protocol.c: protocols/%.xml
+$(PROTO_GEN_DIR)/%-protocol.c: $(PROTO_DIR)/%.xml
+	@mkdir -p $(PROTO_GEN_DIR)
 	$(WAYLAND_SCANNER) private-code $< $@
 
 clean:
-	$(RM) desperateOverview $(OBJS) $(PROTO_HEADERS) $(PROTO_SOURCES)
+	$(RM) $(TARGET) $(OBJS)
+ifneq ($(YYJSON_CLEAN_CMD),)
+	@$(YYJSON_CLEAN_CMD)
+endif
 
-install: desperateOverview
-	install -Dm755 desperateOverview "$(DESTDIR)$(BINDIR)/desperateOverview"
+install: $(TARGET)
+	install -Dm755 $(TARGET) "$(DESTDIR)$(BINDIR)/$(TARGET)"
 
 uninstall:
-	$(RM) "$(DESTDIR)$(BINDIR)/desperateOverview"
+	$(RM) "$(DESTDIR)$(BINDIR)/$(TARGET)"
 

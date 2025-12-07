@@ -13,27 +13,37 @@ extern "C" {
 
 /**
  * @page page_hyprland_toplevel_export_v1 The hyprland_toplevel_export_v1 protocol
+ * capturing the contents of toplevel windows
+ *
+ * @section page_desc_hyprland_toplevel_export_v1 Description
+ *
+ * This protocol allows clients to ask for exporting another toplevel's
+ * surface(s) to a buffer.
+ *
+ * Particularly useful for sharing a single window.
+ *
  * @section page_ifaces_hyprland_toplevel_export_v1 Interfaces
- * - @subpage page_iface_hyprland_toplevel_export_manager_v1 - manager to begin capturing
- * - @subpage page_iface_hyprland_toplevel_export_frame_v1 - a frame ready for copying
+ * - @subpage page_iface_hyprland_toplevel_export_manager_v1 - manager to inform clients and begin capturing
+ * - @subpage page_iface_hyprland_toplevel_export_frame_v1 - a frame ready for copy
  * @section page_copyright_hyprland_toplevel_export_v1 Copyright
  * <pre>
  *
  * Copyright © 2022 Vaxry
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
  *
- * 1. Redistributions of source code must retain the above copyright notice,
- * this list of conditions and the following disclaimer.
+ * 1. Redistributions of source code must retain the above copyright notice, this
+ * list of conditions and the following disclaimer.
  *
  * 2. Redistributions in binary form must reproduce the above copyright notice,
  * this list of conditions and the following disclaimer in the documentation
  * and/or other materials provided with the distribution.
  *
- * 3. Neither the name of the copyright holder nor the names of its contributors
- * may be used to endorse or promote products derived from this software
- * without specific prior written permission.
+ * 3. Neither the name of the copyright holder nor the names of its
+ * contributors may be used to endorse or promote products derived from
+ * this software without specific prior written permission.
  *
  * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
  * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
@@ -58,20 +68,16 @@ struct zwlr_foreign_toplevel_handle_v1;
  * @page page_iface_hyprland_toplevel_export_manager_v1 hyprland_toplevel_export_manager_v1
  * @section page_iface_hyprland_toplevel_export_manager_v1_desc Description
  *
- * This object advertises requests to start capturing the contents of another
- * client's toplevel surface. Each capture request creates a new frame object
- * that advertises the supported buffer types and eventually delivers the
- * captured pixels.
+ * This object is a manager which offers requests to start capturing from a
+ * source.
  * @section page_iface_hyprland_toplevel_export_manager_v1_api API
  * See @ref iface_hyprland_toplevel_export_manager_v1.
  */
 /**
  * @defgroup iface_hyprland_toplevel_export_manager_v1 The hyprland_toplevel_export_manager_v1 interface
  *
- * This object advertises requests to start capturing the contents of another
- * client's toplevel surface. Each capture request creates a new frame object
- * that advertises the supported buffer types and eventually delivers the
- * captured pixels.
+ * This object is a manager which offers requests to start capturing from a
+ * source.
  */
 extern const struct wl_interface hyprland_toplevel_export_manager_v1_interface;
 #endif
@@ -81,20 +87,42 @@ extern const struct wl_interface hyprland_toplevel_export_manager_v1_interface;
  * @page page_iface_hyprland_toplevel_export_frame_v1 hyprland_toplevel_export_frame_v1
  * @section page_iface_hyprland_toplevel_export_frame_v1_desc Description
  *
- * Represents a single capture operation. After creation the compositor will
- * enumerate the supported buffer types (wl_shm and/or linux-dmabuf) and
- * eventually send either a ready or failed event. Once one of those events
- * fires the client should destroy the frame.
+ * This object represents a single frame.
+ *
+ * When created, a series of buffer events will be sent, each representing a
+ * supported buffer type. The "buffer_done" event is sent afterwards to
+ * indicate that all supported buffer types have been enumerated. The client
+ * will then be able to send a "copy" request. If the capture is successful,
+ * the compositor will send a "flags" followed by a "ready" event.
+ *
+ * wl_shm buffers are always supported, ie. the "buffer" event is guaranteed to be sent.
+ *
+ * If the capture failed, the "failed" event is sent. This can happen anytime
+ * before the "ready" event.
+ *
+ * Once either a "ready" or a "failed" event is received, the client should
+ * destroy the frame.
  * @section page_iface_hyprland_toplevel_export_frame_v1_api API
  * See @ref iface_hyprland_toplevel_export_frame_v1.
  */
 /**
  * @defgroup iface_hyprland_toplevel_export_frame_v1 The hyprland_toplevel_export_frame_v1 interface
  *
- * Represents a single capture operation. After creation the compositor will
- * enumerate the supported buffer types (wl_shm and/or linux-dmabuf) and
- * eventually send either a ready or failed event. Once one of those events
- * fires the client should destroy the frame.
+ * This object represents a single frame.
+ *
+ * When created, a series of buffer events will be sent, each representing a
+ * supported buffer type. The "buffer_done" event is sent afterwards to
+ * indicate that all supported buffer types have been enumerated. The client
+ * will then be able to send a "copy" request. If the capture is successful,
+ * the compositor will send a "flags" followed by a "ready" event.
+ *
+ * wl_shm buffers are always supported, ie. the "buffer" event is guaranteed to be sent.
+ *
+ * If the capture failed, the "failed" event is sent. This can happen anytime
+ * before the "ready" event.
+ *
+ * Once either a "ready" or a "failed" event is received, the client should
+ * destroy the frame.
  */
 extern const struct wl_interface hyprland_toplevel_export_frame_v1_interface;
 #endif
@@ -140,10 +168,16 @@ hyprland_toplevel_export_manager_v1_get_version(struct hyprland_toplevel_export_
 /**
  * @ingroup iface_hyprland_toplevel_export_manager_v1
  *
- * Capture the next frame of a toplevel identified by its Hyprland handle.
- * The frame will contain all subsurfaces and popups belonging to the
- * toplevel. If overlay_cursor is non-zero the server is allowed to include
- * the current cursor image in the capture.
+ * Capture the next frame of a toplevel. (window)
+ *
+ * The captured frame will not contain any server-side decorations and will
+ * ignore the compositor-set geometry, like e.g. rounded corners.
+ *
+ * It will contain all the subsurfaces and popups, however the latter will be clipped
+ * to the geometry of the base surface.
+ *
+ * The handle parameter refers to the address of the window as seen in `hyprctl clients`.
+ * For example, for d161e7b0 it would be 3512854448.
  */
 static inline struct hyprland_toplevel_export_frame_v1 *
 hyprland_toplevel_export_manager_v1_capture_toplevel(struct hyprland_toplevel_export_manager_v1 *hyprland_toplevel_export_manager_v1, int32_t overlay_cursor, uint32_t handle)
@@ -159,8 +193,8 @@ hyprland_toplevel_export_manager_v1_capture_toplevel(struct hyprland_toplevel_ex
 /**
  * @ingroup iface_hyprland_toplevel_export_manager_v1
  *
- * Destroys the manager. All frames that have not been destroyed yet remain
- * valid, but no new capture requests may be issued afterwards.
+ * All objects created by the manager will still remain valid, until their
+ * appropriate destroy request has been called.
  */
 static inline void
 hyprland_toplevel_export_manager_v1_destroy(struct hyprland_toplevel_export_manager_v1 *hyprland_toplevel_export_manager_v1)
@@ -172,9 +206,7 @@ hyprland_toplevel_export_manager_v1_destroy(struct hyprland_toplevel_export_mana
 /**
  * @ingroup iface_hyprland_toplevel_export_manager_v1
  *
- * Same as capture_toplevel but the toplevel is identified by a
- * zwlr_foreign_toplevel_handle_v1 instead of a Hyprland-specific numeric
- * handle.
+ * Same as capture_toplevel, but with a zwlr_foreign_toplevel_handle_v1 handle.
  */
 static inline struct hyprland_toplevel_export_frame_v1 *
 hyprland_toplevel_export_manager_v1_capture_toplevel_with_wlr_toplevel_handle(struct hyprland_toplevel_export_manager_v1 *hyprland_toplevel_export_manager_v1, int32_t overlay_cursor, struct zwlr_foreign_toplevel_handle_v1 *handle)
@@ -191,7 +223,7 @@ hyprland_toplevel_export_manager_v1_capture_toplevel_with_wlr_toplevel_handle(st
 #define HYPRLAND_TOPLEVEL_EXPORT_FRAME_V1_ERROR_ENUM
 enum hyprland_toplevel_export_frame_v1_error {
 	/**
-	 * the frame was already copied
+	 * the object has already been used to copy a wl_buffer
 	 */
 	HYPRLAND_TOPLEVEL_EXPORT_FRAME_V1_ERROR_ALREADY_USED = 0,
 	/**
@@ -205,7 +237,7 @@ enum hyprland_toplevel_export_frame_v1_error {
 #define HYPRLAND_TOPLEVEL_EXPORT_FRAME_V1_FLAGS_ENUM
 enum hyprland_toplevel_export_frame_v1_flags {
 	/**
-	 * the contents are y-inverted
+	 * contents are y-inverted
 	 */
 	HYPRLAND_TOPLEVEL_EXPORT_FRAME_V1_FLAGS_Y_INVERT = 1,
 };
@@ -217,10 +249,15 @@ enum hyprland_toplevel_export_frame_v1_flags {
  */
 struct hyprland_toplevel_export_frame_v1_listener {
 	/**
-	 * wl_shm buffer description
+	 * wl_shm buffer information
 	 *
-	 * Announces a wl_shm buffer layout that can be used to copy this
-	 * frame.
+	 * Provides information about wl_shm buffer parameters that need
+	 * to be used for this frame. This event is sent once after the
+	 * frame is created if wl_shm buffers are supported.
+	 * @param format buffer format
+	 * @param width buffer width
+	 * @param height buffer height
+	 * @param stride buffer stride
 	 */
 	void (*buffer)(void *data,
 		       struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1,
@@ -229,10 +266,22 @@ struct hyprland_toplevel_export_frame_v1_listener {
 		       uint32_t height,
 		       uint32_t stride);
 	/**
-	 * damaged region
+	 * carries the coordinates of the damaged region
 	 *
-	 * Announces a box that changed since the previous ready event.
-	 * Multiple damage events may be emitted for the same frame.
+	 * This event is sent right before the ready event when
+	 * ignore_damage was not set. It may be generated multiple times
+	 * for each copy request.
+	 *
+	 * The arguments describe a box around an area that has changed
+	 * since the last copy request that was derived from the current
+	 * screencopy manager instance.
+	 *
+	 * The union of all regions received between the call to copy and a
+	 * ready event is the total damage since the prior ready event.
+	 * @param x damaged x coordinates
+	 * @param y damaged y coordinates
+	 * @param width current width
+	 * @param height current height
 	 */
 	void (*damage)(void *data,
 		       struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1,
@@ -243,17 +292,33 @@ struct hyprland_toplevel_export_frame_v1_listener {
 	/**
 	 * frame flags
 	 *
-	 * Announces flags that describe the capture. Sent once before
-	 * ready.
+	 * Provides flags about the frame. This event is sent once before
+	 * the "ready" event.
+	 * @param flags frame flags
 	 */
 	void (*flags)(void *data,
 		      struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1,
 		      uint32_t flags);
 	/**
-	 * frame is ready for reading
+	 * indicates frame is available for reading
 	 *
-	 * Sent when the compositor has finished copying the frame into
-	 * the provided buffer. Includes a presentation timestamp.
+	 * Called as soon as the frame is copied, indicating it is
+	 * available for reading. This event includes the time at which
+	 * presentation happened at.
+	 *
+	 * The timestamp is expressed as tv_sec_hi, tv_sec_lo, tv_nsec
+	 * triples, each component being an unsigned 32-bit value. Whole
+	 * seconds are in tv_sec which is a 64-bit value combined from
+	 * tv_sec_hi and tv_sec_lo, and the additional fractional part in
+	 * tv_nsec as nanoseconds. Hence, for valid timestamps tv_nsec must
+	 * be in [0, 999999999]. The seconds part may have an arbitrary
+	 * offset at start.
+	 *
+	 * After receiving this event, the client should destroy the
+	 * object.
+	 * @param tv_sec_hi high 32 bits of the seconds part of the timestamp
+	 * @param tv_sec_lo low 32 bits of the seconds part of the timestamp
+	 * @param tv_nsec nanoseconds part of the timestamp
 	 */
 	void (*ready)(void *data,
 		      struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1,
@@ -261,17 +326,24 @@ struct hyprland_toplevel_export_frame_v1_listener {
 		      uint32_t tv_sec_lo,
 		      uint32_t tv_nsec);
 	/**
-	 * frame capture failed
+	 * frame copy failed
 	 *
-	 * Indicates that copying the frame failed. After receiving this
-	 * event the client should destroy the frame object.
+	 * This event indicates that the attempted frame copy has failed.
+	 *
+	 * After receiving this event, the client should destroy the
+	 * object.
 	 */
 	void (*failed)(void *data,
 		       struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1);
 	/**
-	 * linux-dmabuf buffer description
+	 * linux-dmabuf buffer information
 	 *
-	 * Announces parameters for capturing into a linux-dmabuf buffer.
+	 * Provides information about linux-dmabuf buffer parameters that
+	 * need to be used for this frame. This event is sent once after
+	 * the frame is created if linux-dmabuf buffers are supported.
+	 * @param format fourcc pixel format
+	 * @param width buffer width
+	 * @param height buffer height
 	 */
 	void (*linux_dmabuf)(void *data,
 			     struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1,
@@ -281,9 +353,11 @@ struct hyprland_toplevel_export_frame_v1_listener {
 	/**
 	 * all buffer types reported
 	 *
-	 * Sent after all buffer events for this frame have been emitted.
-	 * The client can now choose one of the advertised buffer types and
-	 * issue the copy request.
+	 * This event is sent once after all buffer events have been
+	 * sent.
+	 *
+	 * The client should proceed to create a buffer of one of the
+	 * supported types, and send a "copy" request.
 	 */
 	void (*buffer_done)(void *data,
 			    struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1);
@@ -364,9 +438,16 @@ hyprland_toplevel_export_frame_v1_get_version(struct hyprland_toplevel_export_fr
 /**
  * @ingroup iface_hyprland_toplevel_export_frame_v1
  *
- * Copies the frame into the supplied buffer. The buffer must match one of
- * the formats described by prior buffer events. If ignore_damage is set
- * the compositor may copy without waiting for additional damage.
+ * Copy the frame to the supplied buffer. The buffer must have the
+ * correct size, see hyprland_toplevel_export_frame_v1.buffer and
+ * hyprland_toplevel_export_frame_v1.linux_dmabuf. The buffer needs to have a
+ * supported format.
+ *
+ * If the frame is successfully copied, a "flags" and a "ready" event is
+ * sent. Otherwise, a "failed" event is sent.
+ *
+ * This event will wait for appropriate damage to be copied, unless the ignore_damage
+ * arg is set to a non-zero value.
  */
 static inline void
 hyprland_toplevel_export_frame_v1_copy(struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1, struct wl_buffer *buffer, int32_t ignore_damage)
@@ -377,6 +458,8 @@ hyprland_toplevel_export_frame_v1_copy(struct hyprland_toplevel_export_frame_v1 
 
 /**
  * @ingroup iface_hyprland_toplevel_export_frame_v1
+ *
+ * Destroys the frame. This request can be sent at any time by the client.
  */
 static inline void
 hyprland_toplevel_export_frame_v1_destroy(struct hyprland_toplevel_export_frame_v1 *hyprland_toplevel_export_frame_v1)

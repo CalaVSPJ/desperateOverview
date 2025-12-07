@@ -3,6 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROTO_DIR="${ROOT_DIR}/protocols"
+PROTO_GEN_DIR="${PROTO_DIR}/generated"
 WAYLAND_SCANNER_BIN="${WAYLAND_SCANNER:-wayland-scanner}"
 FETCH_XML=0
 
@@ -27,7 +28,7 @@ if [[ "${1:-}" == "--fetch" ]]; then
     shift
 fi
 
-mkdir -p "${PROTO_DIR}"
+mkdir -p "${PROTO_DIR}" "${PROTO_GEN_DIR}"
 
 declare -A PROTOCOL_URLS=(
     ["wlr-foreign-toplevel-management-unstable-v1"]="https://raw.githubusercontent.com/swaywm/wlroots/master/protocol/wlr-foreign-toplevel-management-unstable-v1.xml"
@@ -56,7 +57,7 @@ shopt -s nullglob
 for xml in "${PROTO_DIR}"/*.xml; do
     base="$(basename "${xml}" .xml)"
     echo "Generating sources for ${base}"
-    "${WAYLAND_SCANNER_BIN}" client-header "${xml}" "${ROOT_DIR}/${base}-client-protocol.h"
-    "${WAYLAND_SCANNER_BIN}" private-code "${xml}" "${ROOT_DIR}/${base}-protocol.c"
+    "${WAYLAND_SCANNER_BIN}" client-header "${xml}" "${PROTO_GEN_DIR}/${base}-client-protocol.h"
+    "${WAYLAND_SCANNER_BIN}" private-code "${xml}" "${PROTO_GEN_DIR}/${base}-protocol.c"
 done
 

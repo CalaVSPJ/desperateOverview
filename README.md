@@ -14,7 +14,15 @@ The project is written in C and depends on the following packages:
 - `gdk-pixbuf-2.0`
 - `wayland-client`
 - `wayland-scanner` (only required when regenerating protocol bindings)
-- `curl` (only required when refreshing the vendored protocol XML files)
+- `curl` (used to fetch protocol XML files and auto-download yyjson during the build)
+
+## Repository layout
+
+- `src/` – application sources
+- `include/` – project headers exposed to multiple modules
+- `protocols/` – protocol XML plus `protocols/generated/` for wayland-scanner output
+- `vendor/yyjson-0.10.0/` – bundled JSON parser
+- `data/`, `docs/`, `scripts/` – runtime assets, documentation, and helper scripts
 
 ## Building
 
@@ -33,6 +41,10 @@ make PREFIX=/usr DESTDIR="$pkgdir" install
 
 `compile.sh` now simply delegates to `make`, so existing scripts or aliases
 continue to work.
+
+The build downloads the matching `yyjson` release on demand into `vendor/`.
+If you want to keep a shared copy elsewhere, set `YYJSON_DIR=/path/to/yyjson`
+when invoking `make`.
 
 ## Vendored Wayland protocols
 
