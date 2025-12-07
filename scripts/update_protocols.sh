@@ -31,7 +31,7 @@ mkdir -p "${PROTO_DIR}"
 
 declare -A PROTOCOL_URLS=(
     ["wlr-foreign-toplevel-management-unstable-v1"]="https://raw.githubusercontent.com/swaywm/wlroots/master/protocol/wlr-foreign-toplevel-management-unstable-v1.xml"
-    ["hyprland-toplevel-export-v1"]="https://raw.githubusercontent.com/hyprwm/hyprland/main/protocols/hyprland-toplevel-export-v1.xml"
+    ["hyprland-toplevel-export-v1"]="https://raw.githubusercontent.com/hyprwm/hyprland-protocols/main/protocols/hyprland-toplevel-export-v1.xml"
 )
 
 if [[ "${FETCH_XML}" -eq 1 ]]; then
