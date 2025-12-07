@@ -9,14 +9,14 @@ obvious before making further behavioural changes.
 - **Threads**
   - The GTK/UI thread drives the overlay window.
   - A background core thread (`desperateOverview_core`) listens to Hyprland IPC,
-    maintains cached state, and requests UI redraws via `core_redraw_callback`.
+    maintains cached state, and requests UI redraws via its redraw callback.
 
 - **State Flow**
-  - `core_copy_state()` snapshots monitors, workspaces, and windows.
-  - `copy_core_state_to_ui()` translates the snapshot into UI friendly
-    structures (`g_ws`, `g_active_list`, thumbnails).
-  - Drag-and-drop callbacks call `core_move_window()` /
-    `core_switch_workspace()` which dispatch Hyprland commands, then the
+  - `desperateOverview_core_copy_state()` snapshots monitors, workspaces, and windows.
+  - `copy_core_state_to_ui()` (now backed by `desperateOverview_ui_state.c`) translates the snapshot into UI-friendly
+    structures (`g_ws`, `g_active_list`, thumbnails) and updates the shared globals consumed by layout/render modules.
+  - Drag-and-drop callbacks call `desperateOverview_core_move_window()` /
+    `desperateOverview_core_switch_workspace()` which dispatch Hyprland commands, then the
     core thread refreshes state asynchronously.
 
 ## Widget Layout
@@ -57,7 +57,7 @@ GtkWindow (layer-shell, full-screen)
 | `GtkWindow` button press           | `on_overlay_window_button_press()` | Closes overlay **only** when the click lands outside both the top workspace strip and the bottom preview |
 | Workspace cell press/release       | `on_cell_button_press/release()` | Distinguish workspace click vs. drag |
 | Workspace drag signals             | `on_cell_drag_*()`               | Move windows between workspaces |
-| Drag drop target                   | `on_cell_drag_data_received()`   | Calls `core_move_window()` when a payload is dropped |
+| Drag drop target                   | `on_cell_drag_data_received()`   | Calls `desperateOverview_core_move_window()` when a payload is dropped |
 
 **Background click rule:** The window-level handler compares the click
 coordinates against the bounds of `g_overlay_content` (top strip) and
@@ -74,13 +74,22 @@ overlay is closed. No other widgets consume background clicks.
   `desperateOverview_ui_build_live_previews()`. The actual capture happens on a
   worker thread and the decoded pixbufs are applied back on the GTK main loop to
   avoid blocking redraws.
+- A small pixbuf cache (`desperateOverview_thumb_cache`) deduplicates thumbnail
+  decoding when the overlay is shown repeatedly—entries are pruned whenever the
+  workspace list changes so memory usage stays bounded.
 
 ## Styling
 
 - A GTK CSS provider is loaded during `desperateOverview_ui_init()`. The loader
-  checks `~/.config/desperateOverview/style.css`, `./desperateOverview.css`, and
-  `./data/desperateOverview.css` (in that order). If none exist a tiny built‑in
-  theme is used.
+  checks, in order:
+  1. An explicit override passed through `desperateOverview --css /path/to/file.css`.
+  2. `~/.config/desperateOverview/style.css`
+  3. `./desperateOverview.css`
+  4. `./data/desperateOverview.css`
+  If none exist a tiny built‑in theme is used.
+- The `--css` flag is useful for testing themes without touching the default search
+  locations. When provided it is the only file that is attempted before falling back
+  to the regular search order.
 - Widgets expose targeted style classes:
   - `desperateOverview-status` – hover/status label above the bottom preview.
   - `desperateOverview-ghost` – the “new workspace” drop target on the top strip.

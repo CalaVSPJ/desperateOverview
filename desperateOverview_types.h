@@ -16,6 +16,8 @@ typedef struct {
     char *class_name;
     char *initial_class;
     char *title;
+    guint32 thumb_crc;
+    guint64 live_cookie;
     double top_preview_x, top_preview_y, top_preview_w, top_preview_h;
     gboolean top_preview_valid;
     double bottom_preview_x, bottom_preview_y, bottom_preview_w, bottom_preview_h;

@@ -1,577 +1,70 @@
 #define _GNU_SOURCE
 
 #include "desperateOverview_core.h"
-#include "desperateOverview_types.h"
 #include "desperateOverview_thumbnail_capture.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdbool.h>
-#include <stdint.h>
-#include <unistd.h>
 #include <string.h>
-#include <errno.h>
-#include <pthread.h>
-#include <sys/socket.h>
-#include <sys/un.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <fcntl.h>
-#include <limits.h>
-#include <time.h>
-#include <glib.h>
 
-#include "yyjson.h"
-#include "desperateOverview_core_json.h"
-
-static int g_mon_id        = 0;
-static int g_mon_w         = 1920;
-static int g_mon_h         = 1080;
-static int g_mon_x         = 0;
-static int g_mon_y         = 0;
-static int g_mon_transform = 0;
-static int g_active_ws = 1;
-
-static WorkspaceWindows g_ws[MAX_WS];
-static int              g_active_list[MAX_WS];
-static char             g_active_names[MAX_WS][CORE_WS_NAME_LEN];
-static int              g_active_count = 0;
-static char             g_workspace_names[MAX_WS][CORE_WS_NAME_LEN];
-
-static pthread_mutex_t g_state_lock = PTHREAD_MUTEX_INITIALIZER;
-
-static char g_hypr_sock_cmd[PATH_MAX];
-static char g_hypr_sock_evt[PATH_MAX];
-
-static pthread_t g_event_thread;
-static bool g_event_thread_running = false;
-static bool g_event_thread_spawned = false;
+#include "desperateOverview_core_ipc.h"
+#include "desperateOverview_core_state_internal.h"
+#include "desperateOverview_core_utils.h"
 
 static CoreRedrawCallback g_redraw_cb = NULL;
-static void *g_redraw_user = NULL;
+static void              *g_redraw_user = NULL;
 
 static void core_request_redraw(void) {
     if (g_redraw_cb)
         g_redraw_cb(g_redraw_user);
 }
 
-static void free_window(WindowInfo *win) {
-    if (!win)
-        return;
-    if (win->thumb_b64) {
-        free(win->thumb_b64);
-        win->thumb_b64 = NULL;
-    }
-    if (win->class_name) {
-        free(win->class_name);
-        win->class_name = NULL;
-    }
-    if (win->initial_class) {
-        free(win->initial_class);
-        win->initial_class = NULL;
-    }
-    if (win->title) {
-        free(win->title);
-        win->title = NULL;
-    }
-    win->addr[0] = '\0';
-    win->x = win->y = win->w = win->h = 0;
-}
-
-static void clear_all_windows(void) {
-    for (int wsid = 0; wsid < MAX_WS; ++wsid) {
-        WorkspaceWindows *W = &g_ws[wsid];
-        for (int i = 0; i < W->count; ++i) {
-            free_window(&W->wins[i]);
-        }
-        W->count = 0;
-        g_workspace_names[wsid][0] = '\0';
-    }
-    memset(g_active_list, 0, sizeof(g_active_list));
-    memset(g_active_names, 0, sizeof(g_active_names));
-    g_active_count = 0;
-}
-
-static void ensure_workspace_name(int wsid) {
-    if (wsid <= 0 || wsid >= MAX_WS)
-        return;
-    if (!g_workspace_names[wsid][0])
-        snprintf(g_workspace_names[wsid], CORE_WS_NAME_LEN, "%d", wsid);
-}
-
-static void update_workspace_names(void) {
-    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j workspaces 2>/dev/null");
-    if (!doc)
-        return;
-
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_arr(root)) {
-        yyjson_doc_free(doc);
-        return;
-    }
-
-    yyjson_val *entry;
-    size_t idx, max;
-    yyjson_arr_foreach(root, idx, max, entry) {
-        int id = desperateOverview_json_get_int(yyjson_obj_get(entry, "id"), -1);
-        if (id <= 0 || id >= MAX_WS)
-            continue;
-        yyjson_val *name_val = yyjson_obj_get(entry, "name");
-        const char *name = (name_val && yyjson_is_str(name_val)) ? yyjson_get_str(name_val) : NULL;
-        if (name && *name)
-            snprintf(g_workspace_names[id], CORE_WS_NAME_LEN, "%s", name);
-        else
-            snprintf(g_workspace_names[id], CORE_WS_NAME_LEN, "%d", id);
-    }
-
-    yyjson_doc_free(doc);
-    ensure_workspace_name(g_active_ws);
-}
-
-static int init_hypr_paths(void) {
-    const char *xdg = getenv("XDG_RUNTIME_DIR");
-    const char *his = getenv("HYPRLAND_INSTANCE_SIGNATURE");
-    if (!xdg || !his)
-        return -1;
-
-    if (snprintf(g_hypr_sock_cmd, sizeof(g_hypr_sock_cmd),
-                 "%s/hypr/%s/.socket.sock", xdg, his) >= (int)sizeof(g_hypr_sock_cmd))
-        return -1;
-    if (snprintf(g_hypr_sock_evt, sizeof(g_hypr_sock_evt),
-                 "%s/hypr/%s/.socket2.sock", xdg, his) >= (int)sizeof(g_hypr_sock_evt))
-        return -1;
-    return 0;
-}
-
-static int connect_unix_socket(const char *path) {
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0)
-        return -1;
-
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path);
-
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        close(fd);
-        return -1;
-    }
-    return fd;
-}
-
-static int hypr_send_command(const char *command) {
-    if (!command || !*command)
-        return -1;
-    if (!g_hypr_sock_cmd[0] && init_hypr_paths() < 0)
-        return -1;
-
-    int fd = connect_unix_socket(g_hypr_sock_cmd);
-    if (fd < 0) {
-        g_warning("desperateOverview: connect(%s) failed: %s",
-                  g_hypr_sock_cmd, strerror(errno));
-        return -1;
-    }
-
-    char payload[512];
-    int len = snprintf(payload, sizeof(payload), "%s", command);
-    if (len < 0 || len >= (int)sizeof(payload)) {
-        close(fd);
-        return -1;
-    }
-    payload[len] = '\0';
-
-    ssize_t w = write(fd, payload, (size_t)len);
-    if (w < 0 || (size_t)w != (size_t)len) {
-        g_warning("desperateOverview: Hyprland command write failed: %s", strerror(errno));
-        close(fd);
-        return -1;
-    }
-
-    char buf[256];
-    while (read(fd, buf, sizeof(buf) - 1) > 0) {
-        /* discard response */
-    }
-
-    close(fd);
-    return 0;
-}
-
-static void sanitize_addr(char *s) {
-    char out[64];
-    int j = 0;
-    for (int i = 0; s[i] && j < 63; i++) {
-        char c = s[i];
-        if ((c >= '0' && c <= '9') ||
-            (c >= 'a' && c <= 'f') ||
-            (c >= 'A' && c <= 'F') ||
-            c == 'x' || c == 'X') {
-            out[j++] = c;
-        } else {
-            break;
-        }
-    }
-    out[j] = 0;
-    strcpy(s, out);
-}
-
-static void update_monitor_geometry(void) {
-    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j monitors 2>/dev/null");
-    if (!doc)
-        return;
-
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_arr(root)) {
-        yyjson_doc_free(doc);
-        return;
-    }
-
-    yyjson_val *entry;
-    size_t idx, max;
-    bool found = false;
-    yyjson_arr_foreach(root, idx, max, entry) {
-        if (!desperateOverview_json_is_true(yyjson_obj_get(entry, "focused")))
-            continue;
-
-        int w = desperateOverview_json_get_int(yyjson_obj_get(entry, "width"), g_mon_w);
-        int h = desperateOverview_json_get_int(yyjson_obj_get(entry, "height"), g_mon_h);
-        if (w > 0 && h > 0) {
-            g_mon_id = desperateOverview_json_get_int(yyjson_obj_get(entry, "id"), g_mon_id);
-            g_mon_w  = w;
-            g_mon_h  = h;
-            g_mon_x  = desperateOverview_json_get_int(yyjson_obj_get(entry, "x"), g_mon_x);
-            g_mon_y  = desperateOverview_json_get_int(yyjson_obj_get(entry, "y"), g_mon_y);
-            g_mon_transform = desperateOverview_json_get_int(yyjson_obj_get(entry, "transform"), 0);
-            found = true;
-            break;
-        }
-    }
-
-    if (!found)
-        g_warning("desperateOverview: focused monitor not found in hyprctl output");
-
-    yyjson_doc_free(doc);
-}
-
-static void update_active_workspace(void) {
-    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j activeworkspace 2>/dev/null");
-    if (!doc)
-        return;
-
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_obj(root)) {
-        yyjson_doc_free(doc);
-        return;
-    }
-
-    int id = desperateOverview_json_get_int(yyjson_obj_get(root, "id"), -1);
-    if (id >= 1 && id < MAX_WS)
-        g_active_ws = id;
-
-    yyjson_doc_free(doc);
-}
-
-static void update_workspace_windows(void) {
-    clear_all_windows();
-
-    int used_ws[MAX_WS] = {0};
-    WindowInfo *capture_targets[MAX_WS * MAX_WINS_PER_WS];
-    int capture_count = 0;
-
-    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j clients 2>/dev/null");
-    if (!doc)
-        return;
-
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_arr(root)) {
-        yyjson_doc_free(doc);
-        return;
-    }
-
-    yyjson_val *entry;
-    size_t idx, max;
-    yyjson_arr_foreach(root, idx, max, entry) {
-        if (!desperateOverview_json_is_true(yyjson_obj_get(entry, "mapped")))
-            continue;
-        if (desperateOverview_json_is_true(yyjson_obj_get(entry, "hidden")))
-            continue;
-
-        yyjson_val *ws_obj = yyjson_obj_get(entry, "workspace");
-        int wsid = desperateOverview_json_get_int(ws_obj ? yyjson_obj_get(ws_obj, "id") : NULL, -1);
-        if (wsid <= 0 || wsid >= MAX_WS)
-            continue;
-
-        int mon = desperateOverview_json_get_int(yyjson_obj_get(entry, "monitor"), -1);
-        if (mon != g_mon_id)
-            continue;
-
-        WorkspaceWindows *W = &g_ws[wsid];
-        if (W->count >= MAX_WINS_PER_WS)
-            continue;
-
-        yyjson_val *addr_val = yyjson_obj_get(entry, "address");
-        const char *addr_raw = (addr_val && yyjson_is_str(addr_val)) ? yyjson_get_str(addr_val) : NULL;
-        if (!addr_raw || !*addr_raw)
-            continue;
-
-        WindowInfo *win = &W->wins[W->count];
-        snprintf(win->addr, sizeof(win->addr), "%s", addr_raw);
-        sanitize_addr(win->addr);
-        if (win->addr[0] == '\0' || strcmp(win->addr, "0x0") == 0)
-            continue;
-
-        if (!desperateOverview_json_get_vec2(yyjson_obj_get(entry, "at"), &win->x, &win->y))
-            continue;
-        if (!desperateOverview_json_get_vec2(yyjson_obj_get(entry, "size"), &win->w, &win->h))
-            continue;
-
-        win->class_name = desperateOverview_json_dup_str(yyjson_obj_get(entry, "class"));
-        win->initial_class = desperateOverview_json_dup_str(yyjson_obj_get(entry, "initialClass"));
-        win->title = desperateOverview_json_dup_str(yyjson_obj_get(entry, "title"));
-        win->thumb_b64 = NULL;
-
-        if (capture_count < (int)(MAX_WS * MAX_WINS_PER_WS))
-            capture_targets[capture_count++] = win;
-
-        W->count++;
-        used_ws[wsid] = 1;
-    }
-
-    yyjson_doc_free(doc);
-
-    capture_thumbnails_parallel(capture_targets, capture_count);
-
-    if (g_active_ws > 0 && g_active_ws < MAX_WS)
-        used_ws[g_active_ws] = 1;
-
-    update_workspace_names();
-
-    g_active_count = 0;
-    for (int wsid = 1; wsid < MAX_WS; ++wsid) {
-        if (!used_ws[wsid])
-            continue;
-
-        if (wsid != g_active_ws) {
-            WorkspaceWindows *W = &g_ws[wsid];
-            if (!W || W->count <= 0)
-                continue;
-        }
-
-        g_active_list[g_active_count] = wsid;
-        ensure_workspace_name(wsid);
-        snprintf(g_active_names[g_active_count], CORE_WS_NAME_LEN, "%s",
-                 g_workspace_names[wsid]);
-        g_active_count++;
-    }
-
-    if (g_active_ws > 0 && g_active_ws < MAX_WS) {
-        bool present = false;
-        for (int i = 0; i < g_active_count; ++i) {
-            if (g_active_list[i] == g_active_ws) {
-                present = true;
-                break;
-            }
-        }
-        if (!present) {
-            g_active_list[g_active_count] = g_active_ws;
-            ensure_workspace_name(g_active_ws);
-            snprintf(g_active_names[g_active_count], CORE_WS_NAME_LEN, "%s",
-                     g_workspace_names[g_active_ws]);
-            g_active_count++;
-        }
-    } else if (g_active_count == 0) {
-        g_active_list[0] = 1;
-        ensure_workspace_name(1);
-        snprintf(g_active_names[0], CORE_WS_NAME_LEN, "%s",
-                 g_workspace_names[1]);
-        g_active_count = 1;
-    }
-}
-
-static void refresh_full_state(void) {
-    pthread_mutex_lock(&g_state_lock);
-    update_active_workspace();
-    update_monitor_geometry();
-    update_workspace_windows();
-    pthread_mutex_unlock(&g_state_lock);
+static void core_on_ipc_refresh(void *user_data) {
+    (void)user_data;
+    desperateOverview_core_state_refresh_full();
     core_request_redraw();
 }
 
-static bool event_requires_refresh(const char *event_name) {
-    if (!event_name || !*event_name)
-        return false;
-
-    static const char *kEvents[] = {
-        "openwindow",
-        "closewindow",
-        "movewindowv2",
-        "moveworkspacev2",
-        "createworkspacev2",
-        "destroyworkspacev2",
-        "workspacev2",
-        "changefloatingmode",
-        "activewindowv2",
-    };
-
-    for (size_t i = 0; i < sizeof(kEvents) / sizeof(kEvents[0]); ++i) {
-        if (strcmp(event_name, kEvents[i]) == 0)
-            return true;
-    }
-
-    return false;
-}
-
-static void *hypr_event_thread(void *data) {
-    (void)data;
-
-    while (g_event_thread_running) {
-        if (!g_hypr_sock_evt[0] && init_hypr_paths() < 0) {
-            sleep(1);
-            continue;
-        }
-
-        int fd = connect_unix_socket(g_hypr_sock_evt);
-        if (fd < 0) {
-            g_warning("desperateOverview: event socket connect(%s) failed: %s",
-                      g_hypr_sock_evt, strerror(errno));
-            sleep(1);
-            continue;
-        }
-
-        FILE *fp = fdopen(fd, "r");
-        if (!fp) {
-            close(fd);
-            sleep(1);
-            continue;
-        }
-
-        char line[512];
-        while (g_event_thread_running && fgets(line, sizeof(line), fp)) {
-            char *nl = strchr(line, '\n');
-            if (nl)
-                *nl = 0;
-
-            char *sep = strstr(line, ">>");
-            if (!sep)
-                continue;
-            *sep = 0;
-
-            if (event_requires_refresh(line)) {
-                refresh_full_state();
-            }
-        }
-
-        fclose(fp);
-        sleep(1);
-    }
-
-    return NULL;
-}
-
-static void copy_window_to_core(const WindowInfo *src, CoreWindow *dst) {
-    dst->x = src->x;
-    dst->y = src->y;
-    dst->w = src->w;
-    dst->h = src->h;
-    strncpy(dst->addr, src->addr, sizeof(dst->addr));
-    dst->addr[sizeof(dst->addr) - 1] = '\0';
-    dst->thumb_b64 = src->thumb_b64 ? strdup(src->thumb_b64) : NULL;
-    dst->class_name = src->class_name ? strdup(src->class_name) : NULL;
-    dst->initial_class = src->initial_class ? strdup(src->initial_class) : NULL;
-    dst->title = src->title ? strdup(src->title) : NULL;
-}
-
-int core_init(CoreRedrawCallback cb, void *user_data) {
+int desperateOverview_core_init(CoreRedrawCallback cb, void *user_data) {
     g_redraw_cb = cb;
     g_redraw_user = user_data;
 
-    if (init_hypr_paths() < 0) {
-        fprintf(stderr, "[core] failed to resolve Hyprland IPC paths\n");
+    desperateOverview_core_state_init();
+
+    if (desperateOverview_core_ipc_init() != 0) {
+        fprintf(stderr, "desperateOverview: failed to resolve Hyprland IPC paths\n");
+        desperateOverview_core_state_shutdown();
         return -1;
     }
 
-    g_event_thread_running = true;
-    if (pthread_create(&g_event_thread, NULL, hypr_event_thread, NULL) != 0) {
-        fprintf(stderr, "[core] failed to start event listener thread\n");
-        g_event_thread_running = false;
+    if (desperateOverview_core_ipc_start_events(core_on_ipc_refresh, NULL) != 0) {
+        fprintf(stderr, "desperateOverview: failed to start event listener thread\n");
+        desperateOverview_core_ipc_shutdown();
+        desperateOverview_core_state_shutdown();
         return -1;
     }
-    g_event_thread_spawned = true;
 
-    refresh_full_state();
+    desperateOverview_core_state_refresh_full();
+    core_request_redraw();
     return 0;
 }
 
-void core_shutdown(void) {
-    g_event_thread_running = false;
-    if (g_event_thread_spawned) {
-        pthread_join(g_event_thread, NULL);
-        g_event_thread_spawned = false;
-    }
-
-    pthread_mutex_lock(&g_state_lock);
-    clear_all_windows();
-    pthread_mutex_unlock(&g_state_lock);
+void desperateOverview_core_shutdown(void) {
+    desperateOverview_core_ipc_stop_events();
+    desperateOverview_core_ipc_shutdown();
+    desperateOverview_core_state_shutdown();
+    g_redraw_cb = NULL;
+    g_redraw_user = NULL;
 }
 
-void core_copy_state(CoreState *out_state) {
-    if (!out_state)
-        return;
-
-    core_free_state(out_state);
-    memset(out_state, 0, sizeof(*out_state));
-
-    pthread_mutex_lock(&g_state_lock);
-
-    out_state->mon_id = g_mon_id;
-    out_state->mon_width = g_mon_w;
-    out_state->mon_height = g_mon_h;
-    out_state->mon_off_x = g_mon_x;
-    out_state->mon_off_y = g_mon_y;
-    out_state->mon_transform = g_mon_transform;
-    out_state->active_workspace = g_active_ws;
-    out_state->active_count = g_active_count;
-    memcpy(out_state->active_list, g_active_list, sizeof(g_active_list));
-    memcpy(out_state->active_names, g_active_names, sizeof(g_active_names));
-
-    for (int wsid = 0; wsid < MAX_WS; ++wsid) {
-        CoreWorkspace *dst_ws = &out_state->workspaces[wsid];
-        WorkspaceWindows *src_ws = &g_ws[wsid];
-        dst_ws->count = src_ws->count;
-        for (int j = 0; j < src_ws->count; ++j) {
-            copy_window_to_core(&src_ws->wins[j], &dst_ws->wins[j]);
-        }
-    }
-
-    pthread_mutex_unlock(&g_state_lock);
-}
-
-void core_free_state(CoreState *state) {
-    if (!state)
-        return;
-    for (int wsid = 0; wsid < MAX_WS; ++wsid) {
-        CoreWorkspace *ws = &state->workspaces[wsid];
-        for (int j = 0; j < ws->count; ++j) {
-            free(ws->wins[j].thumb_b64);
-            ws->wins[j].thumb_b64 = NULL;
-            free(ws->wins[j].class_name);
-            ws->wins[j].class_name = NULL;
-            free(ws->wins[j].initial_class);
-            ws->wins[j].initial_class = NULL;
-            free(ws->wins[j].title);
-            ws->wins[j].title = NULL;
-        }
-        ws->count = 0;
-    }
-}
-
-void core_move_window(const char *addr, int wsid) {
+void desperateOverview_core_move_window(const char *addr, int wsid) {
     if (!addr || !addr[0] || wsid <= 0)
         return;
 
     char addr_clean[64];
     snprintf(addr_clean, sizeof(addr_clean), "%s", addr);
-    sanitize_addr(addr_clean);
+    desperateOverview_core_sanitize_addr(addr_clean);
 
     char ws[16];
     snprintf(ws, sizeof(ws), "%d", wsid);
@@ -580,10 +73,10 @@ void core_move_window(const char *addr, int wsid) {
     snprintf(cmd, sizeof(cmd),
              "dispatch movetoworkspacesilent %s,address:%s",
              ws, addr_clean);
-    hypr_send_command(cmd);
+    desperateOverview_core_ipc_send_command(cmd);
 }
 
-void core_switch_workspace(const char *name, int wsid) {
+void desperateOverview_core_switch_workspace(const char *name, int wsid) {
     char cmd[200];
 
     if (name && strncmp(name, "special:", 8) == 0) {
@@ -600,32 +93,19 @@ void core_switch_workspace(const char *name, int wsid) {
         return;
     }
 
-    hypr_send_command(cmd);
-    refresh_full_state();
+    desperateOverview_core_ipc_send_command(cmd);
 }
 
-void core_focus_window(const char *addr) {
-    if (!addr || !addr[0])
-        return;
-
-    char addr_clean[64];
-    snprintf(addr_clean, sizeof(addr_clean), "%s", addr);
-    sanitize_addr(addr_clean);
-
-    char cmd[256];
-    snprintf(cmd, sizeof(cmd),
-             "dispatch focuswindow address:%s",
-             addr_clean);
-    hypr_send_command(cmd);
-}
-
-char *core_capture_window_raw(const char *addr) {
+char *desperateOverview_core_capture_window_raw(const char *addr) {
     if (!addr || !addr[0])
         return NULL;
     char addr_clean[64];
     snprintf(addr_clean, sizeof(addr_clean), "%s", addr);
-    sanitize_addr(addr_clean);
+    desperateOverview_core_sanitize_addr(addr_clean);
     return capture_window_ppm_base64_with_limit(addr_clean, 0);
 }
 
-
+void desperateOverview_core_request_full_refresh(void) {
+    desperateOverview_core_state_refresh_full();
+    core_request_redraw();
+}

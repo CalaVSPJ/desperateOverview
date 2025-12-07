@@ -20,6 +20,8 @@ static bool g_control_thread_running = false;
 static char g_control_sock_path[256];
 static char g_cli_config_path[PATH_MAX];
 static bool g_cli_config_path_set = false;
+static char g_cli_css_path[PATH_MAX];
+static bool g_cli_css_path_set = false;
 
 #define CONTROL_SOCKET_PATH_FMT "/run/user/%d/desp_overview.sock"
 
@@ -198,6 +200,14 @@ int main(int argc, char **argv) {
             snprintf(g_cli_config_path, sizeof(g_cli_config_path), "%s", argv[i + 1]);
             g_cli_config_path_set = true;
             ++i;
+        } else if (strcmp(argv[i], "--css") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "desperateOverview: --css requires a file path\n");
+                return 1;
+            }
+            snprintf(g_cli_css_path, sizeof(g_cli_css_path), "%s", argv[i + 1]);
+            g_cli_css_path_set = true;
+            ++i;
         } else if (strcmp(argv[i], "--toggle") == 0) {
             if (send_control_command("TOGGLE") == 0)
                 return 0;
@@ -221,16 +231,18 @@ int main(int argc, char **argv) {
 
     gtk_init(&argc, &argv);
     const char *config_path = g_cli_config_path_set ? g_cli_config_path : NULL;
+    if (g_cli_css_path_set)
+        desperateOverview_ui_set_css_override(g_cli_css_path);
     desperateOverview_ui_init(config_path);
 
-    if (core_init(desperateOverview_ui_core_redraw_callback, NULL) != 0) {
+    if (desperateOverview_core_init(desperateOverview_ui_core_redraw_callback, NULL) != 0) {
         desperateOverview_ui_shutdown();
         return 1;
     }
     desperateOverview_ui_sync_with_core();
 
     if (start_control_server() != 0) {
-        core_shutdown();
+        desperateOverview_core_shutdown();
         desperateOverview_ui_shutdown();
         return 1;
     }
@@ -241,7 +253,7 @@ int main(int argc, char **argv) {
     gtk_main();
 
     stop_control_server();
-    core_shutdown();
+    desperateOverview_core_shutdown();
     desperateOverview_ui_shutdown();
     return 0;
 }

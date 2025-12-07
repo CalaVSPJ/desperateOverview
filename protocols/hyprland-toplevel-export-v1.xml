@@ -1,0 +1,165 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="hyprland_toplevel_export_v1">
+  <copyright>
+    Copyright © 2022 Vaxry
+
+    Redistribution and use in source and binary forms, with or without
+    modification, are permitted provided that the following conditions are met:
+
+    1. Redistributions of source code must retain the above copyright notice,
+       this list of conditions and the following disclaimer.
+
+    2. Redistributions in binary form must reproduce the above copyright notice,
+       this list of conditions and the following disclaimer in the documentation
+       and/or other materials provided with the distribution.
+
+    3. Neither the name of the copyright holder nor the names of its contributors
+       may be used to endorse or promote products derived from this software
+       without specific prior written permission.
+
+    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+    IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+    DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+    FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+    DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+    SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+    CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+    OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+  </copyright>
+
+  <interface name="hyprland_toplevel_export_manager_v1" version="2">
+    <description summary="manager to begin capturing">
+      This object advertises requests to start capturing the contents of another
+      client's toplevel surface. Each capture request creates a new frame object
+      that advertises the supported buffer types and eventually delivers the
+      captured pixels.
+    </description>
+
+    <request name="capture_toplevel">
+      <description summary="capture a toplevel by handle">
+        Capture the next frame of a toplevel identified by its Hyprland handle.
+        The frame will contain all subsurfaces and popups belonging to the
+        toplevel. If overlay_cursor is non-zero the server is allowed to include
+        the current cursor image in the capture.
+      </description>
+      <arg name="frame" type="new_id" interface="hyprland_toplevel_export_frame_v1"/>
+      <arg name="overlay_cursor" type="int"/>
+      <arg name="handle" type="uint"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroys the manager. All frames that have not been destroyed yet remain
+        valid, but no new capture requests may be issued afterwards.
+      </description>
+    </request>
+
+    <request name="capture_toplevel_with_wlr_toplevel_handle" since="2">
+      <description summary="capture a toplevel using a wlr_foreign handle">
+        Same as capture_toplevel but the toplevel is identified by a
+        zwlr_foreign_toplevel_handle_v1 instead of a Hyprland-specific numeric
+        handle.
+      </description>
+      <arg name="frame" type="new_id" interface="hyprland_toplevel_export_frame_v1"/>
+      <arg name="overlay_cursor" type="int"/>
+      <arg name="handle" type="object" interface="zwlr_foreign_toplevel_handle_v1"/>
+    </request>
+  </interface>
+
+  <interface name="hyprland_toplevel_export_frame_v1" version="2">
+    <description summary="a frame ready for copying">
+      Represents a single capture operation. After creation the compositor will
+      enumerate the supported buffer types (wl_shm and/or linux-dmabuf) and
+      eventually send either a ready or failed event. Once one of those events
+      fires the client should destroy the frame.
+    </description>
+
+    <event name="buffer">
+      <description summary="wl_shm buffer description">
+        Announces a wl_shm buffer layout that can be used to copy this frame.
+      </description>
+      <arg name="format" type="uint"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+      <arg name="stride" type="uint"/>
+    </event>
+
+    <event name="damage">
+      <description summary="damaged region">
+        Announces a box that changed since the previous ready event. Multiple
+        damage events may be emitted for the same frame.
+      </description>
+      <arg name="x" type="uint"/>
+      <arg name="y" type="uint"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+    </event>
+
+    <event name="flags">
+      <description summary="frame flags">
+        Announces flags that describe the capture. Sent once before ready.
+      </description>
+      <arg name="flags" type="uint"/>
+    </event>
+
+    <event name="ready">
+      <description summary="frame is ready for reading">
+        Sent when the compositor has finished copying the frame into the
+        provided buffer. Includes a presentation timestamp.
+      </description>
+      <arg name="tv_sec_hi" type="uint"/>
+      <arg name="tv_sec_lo" type="uint"/>
+      <arg name="tv_nsec" type="uint"/>
+    </event>
+
+    <event name="failed">
+      <description summary="frame capture failed">
+        Indicates that copying the frame failed. After receiving this event the
+        client should destroy the frame object.
+      </description>
+    </event>
+
+    <event name="linux_dmabuf">
+      <description summary="linux-dmabuf buffer description">
+        Announces parameters for capturing into a linux-dmabuf buffer.
+      </description>
+      <arg name="format" type="uint"/>
+      <arg name="width" type="uint"/>
+      <arg name="height" type="uint"/>
+    </event>
+
+    <event name="buffer_done">
+      <description summary="all buffer types reported">
+        Sent after all buffer events for this frame have been emitted. The
+        client can now choose one of the advertised buffer types and issue the
+        copy request.
+      </description>
+    </event>
+
+    <request name="copy">
+      <description summary="copy the frame into a wl_buffer">
+        Copies the frame into the supplied buffer. The buffer must match one of
+        the formats described by prior buffer events. If ignore_damage is set
+        the compositor may copy without waiting for additional damage.
+      </description>
+      <arg name="buffer" type="object" interface="wl_buffer"/>
+      <arg name="ignore_damage" type="int"/>
+    </request>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the frame object"/>
+    </request>
+
+    <enum name="error">
+      <entry name="already_used" value="0" summary="the frame was already copied"/>
+      <entry name="invalid_buffer" value="1" summary="buffer attributes are invalid"/>
+    </enum>
+
+    <enum name="flags">
+      <entry name="y_invert" value="1" summary="the contents are y-inverted"/>
+    </enum>
+  </interface>
+</protocol>
+

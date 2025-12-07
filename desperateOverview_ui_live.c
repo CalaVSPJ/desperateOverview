@@ -3,6 +3,7 @@
 #include "desperateOverview_ui_live.h"
 
 #include <glib.h>
+#include <string.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
 #include "desperateOverview_core.h"
@@ -11,17 +12,31 @@
 typedef struct {
     WindowInfo *win;
     GdkPixbuf  *pixbuf;
+    char        addr_snapshot[64];
+    guint64     cookie_snapshot;
 } LivePreviewTask;
 
 static DesperateOverviewLiveApply g_live_apply_cb = NULL;
 static gpointer                   g_live_apply_data = NULL;
+static guint64                    g_live_cookie_counter = 1;
+
+void desperateOverview_live_cancel_tasks(WindowInfo *win) {
+    if (!win)
+        return;
+    win->live_cookie = g_live_cookie_counter++;
+}
 
 static gboolean dispatch_live_preview(gpointer data) {
     LivePreviewTask *task = data;
-    if (g_live_apply_cb)
+    if (task->win && task->addr_snapshot[0] &&
+        task->win->addr[0] &&
+        strcmp(task->win->addr, task->addr_snapshot) == 0 &&
+        task->cookie_snapshot == task->win->live_cookie &&
+        g_live_apply_cb) {
         g_live_apply_cb(task->win, task->pixbuf, g_live_apply_data);
-    if (task->pixbuf)
+    } else if (task->pixbuf) {
         g_object_unref(task->pixbuf);
+    }
     g_free(task);
     return G_SOURCE_REMOVE;
 }
@@ -35,7 +50,9 @@ static void desperateOverview_ui_capture_live_preview(WindowInfo *win) {
     if (!win || !win->addr[0])
         return;
 
-    char *b64 = core_capture_window_raw(win->addr);
+    guint64 cookie = win->live_cookie;
+
+    char *b64 = desperateOverview_core_capture_window_raw(win->addr);
     if (!b64) {
         g_warning("[desperateOverview] live preview capture failed for %s (no data)", win->addr);
         return;
@@ -48,6 +65,11 @@ static void desperateOverview_ui_capture_live_preview(WindowInfo *win) {
         g_warning("[desperateOverview] live preview capture failed for %s (empty payload)", win->addr);
         if (raw)
             g_free(raw);
+        return;
+    }
+
+    if (cookie != win->live_cookie) {
+        g_free(raw);
         return;
     }
 
@@ -71,10 +93,18 @@ static void desperateOverview_ui_capture_live_preview(WindowInfo *win) {
     g_object_unref(loader);
     g_free(raw);
 
+    if (cookie != win->live_cookie) {
+        if (result)
+            g_object_unref(result);
+        return;
+    }
+
     if (g_live_apply_cb) {
         LivePreviewTask *task = g_new0(LivePreviewTask, 1);
         task->win = win;
         task->pixbuf = result;
+        g_strlcpy(task->addr_snapshot, win->addr, sizeof(task->addr_snapshot));
+        task->cookie_snapshot = cookie;
         g_idle_add(dispatch_live_preview, task);
     } else if (result) {
         g_object_unref(result);
@@ -96,6 +126,7 @@ void desperateOverview_ui_build_live_previews(int active_workspace,
         WindowInfo *win = &W->wins[i];
         if (!win || !win->addr[0])
             continue;
+        win->live_cookie = g_live_cookie_counter++;
         targets[target_count++] = win;
     }
 

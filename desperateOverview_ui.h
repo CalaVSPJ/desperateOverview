@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 void desperateOverview_ui_init(const char *config_path);
+void desperateOverview_ui_set_css_override(const char *path);
 void desperateOverview_ui_shutdown(void);
 void desperateOverview_ui_sync_with_core(void);
 void desperateOverview_ui_request_show(void);
