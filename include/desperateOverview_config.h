@@ -19,6 +19,7 @@ typedef struct {
     guint   drag_hold_delay_ms;
     guint   thumbnail_thread_count;
     gboolean follow_drop;
+    double  fade_step;
 } OverlayConfig;
 
 void config_init(const char *override_path);

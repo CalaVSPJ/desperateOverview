@@ -276,7 +276,8 @@ static gboolean show_overlay_idle(gpointer data) {
     if (g_overlay_visible)
         return G_SOURCE_REMOVE;
     desperateOverview_core_set_thumbnail_capture_enabled(true);
-    desperateOverview_core_request_full_refresh();
+    if (desperateOverview_core_state_needs_refresh())
+        desperateOverview_core_request_full_refresh();
     g_force_decode_thumbs = TRUE;
     g_force_live_previews = TRUE;
     copy_core_state_to_ui();
@@ -370,7 +371,9 @@ static gboolean fade_in_cb(gpointer data) {
         return FALSE;
     }
     double op = gtk_widget_get_opacity(window);
-    op += 0.08;
+    const OverlayConfig *cfg = config_get();
+    double step = (cfg && cfg->fade_step > 0.0) ? cfg->fade_step : 0.08;
+    op += step;
     if (op >= 1.0) {
         gtk_widget_set_opacity(window, 1.0);
         g_fade_source_id = 0;

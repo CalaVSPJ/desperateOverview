@@ -99,6 +99,7 @@ static void set_defaults(OverlayConfig *cfg) {
     cfg->window_corner_radius = 4.0;
     cfg->drag_hold_delay_ms = 150;
     cfg->thumbnail_thread_count = 4;
+    cfg->fade_step = 0.08;
     cfg->follow_drop = FALSE;
 }
 
@@ -157,6 +158,12 @@ static void load_from_file(const char *path, OverlayConfig *cfg) {
     gint thumb_threads = g_key_file_get_integer(kf, "behavior", "thumbnail_thread_count", &local_err);
     if (!local_err && thumb_threads > 0)
         cfg->thumbnail_thread_count = (guint)thumb_threads;
+    if (local_err)
+        g_clear_error(&local_err);
+
+    double fade_step = g_key_file_get_double(kf, "behavior", "fade_step", &local_err);
+    if (!local_err && fade_step > 0.0)
+        cfg->fade_step = fade_step;
     if (local_err)
         g_clear_error(&local_err);
 

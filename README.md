@@ -56,6 +56,8 @@ of keys. Relevant behavioral settings include:
 - `thumbnail_thread_count` – worker threads for thumbnail decoding
 - `follow_drop` – when `true`, the overlay switches to the workspace that a
   dragged window was dropped onto (and issues a Hyprland workspace switch).
+- `fade_step` – opacity increment applied every 16 ms during overlay fade-in
+  (lower values slow the animation, higher values make it snappier).
 
 ## Vendored Wayland protocols
 

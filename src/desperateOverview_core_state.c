@@ -16,6 +16,18 @@
 #include <glib.h>
 #include "yyjson.h"
 
+typedef struct {
+    const char *command;
+    yyjson_doc *doc;
+    bool started;
+} HyprctlFetchTask;
+
+static void *hyprctl_fetch_thread(void *arg) {
+    HyprctlFetchTask *task = (HyprctlFetchTask *)arg;
+    task->doc = desperateOverview_read_json_from_cmd(task->command);
+    return NULL;
+}
+
 static int  g_mon_id        = 0;
 static int  g_mon_w         = 1920;
 static int  g_mon_h         = 1080;
@@ -30,6 +42,7 @@ static int              g_active_count = 0;
 
 static pthread_mutex_t g_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool g_capture_enabled = true;
+static bool g_state_dirty = true;
 
 static void free_window(WindowInfo *win) {
     if (!win)
@@ -94,14 +107,9 @@ static void update_workspace_names(void) {
     ensure_workspace_name(g_active_ws);
 }
 
-static void update_monitor_geometry(void) {
-    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j monitors 2>/dev/null");
-    if (!doc)
-        return;
-
+static void update_monitor_geometry_from_doc(yyjson_doc *doc) {
     yyjson_val *root = yyjson_doc_get_root(doc);
     if (!yyjson_is_arr(root)) {
-        yyjson_doc_free(doc);
         return;
     }
 
@@ -128,29 +136,35 @@ static void update_monitor_geometry(void) {
 
     if (!found)
         g_warning("desperateOverview: focused monitor not found in hyprctl output");
+}
 
+static void update_monitor_geometry(void) {
+    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j monitors 2>/dev/null");
+    if (!doc)
+        return;
+    update_monitor_geometry_from_doc(doc);
     yyjson_doc_free(doc);
+}
+
+static void update_active_workspace_from_doc(yyjson_doc *doc) {
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_obj(root))
+        return;
+
+    int id = desperateOverview_json_get_int(yyjson_obj_get(root, "id"), -1);
+    if (id >= 1 && id < MAX_WS)
+        g_active_ws = id;
 }
 
 static void update_active_workspace(void) {
     yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j activeworkspace 2>/dev/null");
     if (!doc)
         return;
-
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_obj(root)) {
-        yyjson_doc_free(doc);
-        return;
-    }
-
-    int id = desperateOverview_json_get_int(yyjson_obj_get(root, "id"), -1);
-    if (id >= 1 && id < MAX_WS)
-        g_active_ws = id;
-
+    update_active_workspace_from_doc(doc);
     yyjson_doc_free(doc);
 }
 
-static void update_workspace_windows(void) {
+static void update_workspace_windows_from_doc(yyjson_doc *doc) {
     clear_all_windows();
 
     int used_ws[MAX_WS] = {0};
@@ -158,13 +172,8 @@ static void update_workspace_windows(void) {
     int capture_count = 0;
     bool need_workspace_names = false;
 
-    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j clients 2>/dev/null");
-    if (!doc)
-        return;
-
     yyjson_val *root = yyjson_doc_get_root(doc);
     if (!yyjson_is_arr(root)) {
-        yyjson_doc_free(doc);
         return;
     }
 
@@ -228,8 +237,6 @@ static void update_workspace_windows(void) {
         used_ws[wsid] = 1;
     }
 
-    yyjson_doc_free(doc);
-
     if (g_capture_enabled && capture_count > 0)
         capture_thumbnails_parallel(capture_targets, capture_count);
 
@@ -275,11 +282,59 @@ static void update_workspace_windows(void) {
     }
 }
 
+static void update_workspace_windows(void) {
+    yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j clients 2>/dev/null");
+    if (!doc)
+        return;
+    update_workspace_windows_from_doc(doc);
+    yyjson_doc_free(doc);
+}
+
 void desperateOverview_core_state_refresh_full(void) {
     pthread_mutex_lock(&g_state_lock);
-    update_active_workspace();
-    update_monitor_geometry();
-    update_workspace_windows();
+    HyprctlFetchTask monitor_task = { .command = "hyprctl -j monitors 2>/dev/null", .doc = NULL, .started = false };
+    HyprctlFetchTask workspace_task = { .command = "hyprctl -j activeworkspace 2>/dev/null", .doc = NULL, .started = false };
+    HyprctlFetchTask clients_task = { .command = "hyprctl -j clients 2>/dev/null", .doc = NULL, .started = false };
+
+    pthread_t monitor_thread, workspace_thread, clients_thread;
+
+    if (pthread_create(&monitor_thread, NULL, hyprctl_fetch_thread, &monitor_task) == 0)
+        monitor_task.started = true;
+    if (pthread_create(&workspace_thread, NULL, hyprctl_fetch_thread, &workspace_task) == 0)
+        workspace_task.started = true;
+    if (pthread_create(&clients_thread, NULL, hyprctl_fetch_thread, &clients_task) == 0)
+        clients_task.started = true;
+
+    if (workspace_task.started)
+        pthread_join(workspace_thread, NULL);
+    if (monitor_task.started)
+        pthread_join(monitor_thread, NULL);
+    if (clients_task.started)
+        pthread_join(clients_thread, NULL);
+
+    if (workspace_task.doc)
+        update_active_workspace_from_doc(workspace_task.doc);
+    else
+        update_active_workspace();
+
+    if (monitor_task.doc)
+        update_monitor_geometry_from_doc(monitor_task.doc);
+    else
+        update_monitor_geometry();
+
+    if (clients_task.doc)
+        update_workspace_windows_from_doc(clients_task.doc);
+    else
+        update_workspace_windows();
+
+    if (workspace_task.doc)
+        yyjson_doc_free(workspace_task.doc);
+    if (monitor_task.doc)
+        yyjson_doc_free(monitor_task.doc);
+    if (clients_task.doc)
+        yyjson_doc_free(clients_task.doc);
+
+    g_state_dirty = !g_capture_enabled;
     pthread_mutex_unlock(&g_state_lock);
 }
 
@@ -361,6 +416,15 @@ void desperateOverview_core_free_state(CoreState *state) {
 void desperateOverview_core_set_thumbnail_capture_enabled(bool enabled) {
     pthread_mutex_lock(&g_state_lock);
     g_capture_enabled = enabled;
+    if (!enabled)
+        g_state_dirty = true;
     pthread_mutex_unlock(&g_state_lock);
+}
+
+bool desperateOverview_core_state_needs_refresh(void) {
+    pthread_mutex_lock(&g_state_lock);
+    bool dirty = g_state_dirty;
+    pthread_mutex_unlock(&g_state_lock);
+    return dirty;
 }
 

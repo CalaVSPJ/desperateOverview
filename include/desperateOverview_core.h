@@ -52,6 +52,7 @@ void desperateOverview_core_switch_workspace(const char *name, int wsid);
 char *desperateOverview_core_capture_window_raw(const char *addr);
 void desperateOverview_core_set_thumbnail_capture_enabled(bool enabled);
 void desperateOverview_core_request_full_refresh(void);
+bool desperateOverview_core_state_needs_refresh(void);
 
 #ifdef __cplusplus
 }
