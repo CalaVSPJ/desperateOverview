@@ -99,6 +99,7 @@ static void set_defaults(OverlayConfig *cfg) {
     cfg->window_corner_radius = 4.0;
     cfg->drag_hold_delay_ms = 150;
     cfg->thumbnail_thread_count = 4;
+    cfg->follow_drop = FALSE;
 }
 
 static gchar *default_config_path(void) {
@@ -156,6 +157,12 @@ static void load_from_file(const char *path, OverlayConfig *cfg) {
     gint thumb_threads = g_key_file_get_integer(kf, "behavior", "thumbnail_thread_count", &local_err);
     if (!local_err && thumb_threads > 0)
         cfg->thumbnail_thread_count = (guint)thumb_threads;
+    if (local_err)
+        g_clear_error(&local_err);
+
+    gboolean follow_drop = g_key_file_get_boolean(kf, "behavior", "follow_drop", &local_err);
+    if (!local_err)
+        cfg->follow_drop = follow_drop;
     if (local_err)
         g_clear_error(&local_err);
 

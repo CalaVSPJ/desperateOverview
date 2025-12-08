@@ -16,6 +16,17 @@ extern void close_overlay(void);
 
 static const double G_DRAG_HOLD_MOVE_THRESHOLD = 3.0;
 
+static void follow_drop_to_workspace(int target_ws) {
+    if (target_ws <= 0 || target_ws >= MAX_WS)
+        return;
+    const OverlayConfig *cfg = config_get();
+    if (!cfg || !cfg->follow_drop)
+        return;
+    desperateOverview_ui_refresh_active_workspace_view(target_ws);
+    const char *name = desperateOverview_ui_workspace_display_name(target_ws);
+    desperateOverview_core_switch_workspace(name, target_ws);
+}
+
 static int resolve_workspace_id(gpointer data) {
     int wsid = GPOINTER_TO_INT(data);
     if (wsid == 0)
@@ -386,8 +397,10 @@ void desperateOverview_ui_on_cell_drag_data_received(GtkWidget *widget,
 
     gtk_drag_finish(context, success, FALSE, time);
 
-    if (success)
+    if (success) {
+        follow_drop_to_workspace(target_ws);
         desperateOverview_ui_queue_cells_redraw();
+    }
 }
 
 gboolean desperateOverview_ui_on_cell_drag_drop(GtkWidget *widget,
@@ -462,6 +475,7 @@ gboolean desperateOverview_ui_on_new_ws_drag_drop(GtkWidget *widget, GdkDragCont
     gtk_drag_finish(context, TRUE, FALSE, time);
                 desperateOverview_core_move_window(g_drag.active_window->addr, free_ws);
     desperateOverview_ui_queue_cells_redraw();
+    follow_drop_to_workspace(free_ws);
     return TRUE;
 }
 

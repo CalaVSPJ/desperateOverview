@@ -18,6 +18,7 @@ typedef struct {
     double  window_corner_radius;
     guint   drag_hold_delay_ms;
     guint   thumbnail_thread_count;
+    gboolean follow_drop;
 } OverlayConfig;
 
 void config_init(const char *override_path);

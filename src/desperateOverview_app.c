@@ -190,6 +190,7 @@ static bool notify_existing_instance(const char *cmd) {
 int main(int argc, char **argv) {
     bool force_show_on_start = false;
     bool skip_notify = false;
+    bool oneshot_mode = false;
 
     for (int i = 1; i < argc; ++i) {
         if (strcmp(argv[i], "--config") == 0) {
@@ -215,9 +216,11 @@ int main(int argc, char **argv) {
             force_show_on_start = true;
             skip_notify = true;
         } else if (strcmp(argv[i], "--show") == 0) {
-            return send_control_command("SHOW");
+            oneshot_mode = true;
+            force_show_on_start = true;
+            skip_notify = true;
         } else if (strcmp(argv[i], "--hide") == 0) {
-            return send_control_command("HIDE");
+            return send_control_command("QUIT");
         } else if (strcmp(argv[i], "--quit") == 0) {
             return send_control_command("QUIT");
         } else {
@@ -235,16 +238,23 @@ int main(int argc, char **argv) {
         desperateOverview_ui_set_css_override(g_cli_css_path);
     desperateOverview_ui_init(config_path);
 
+    if (oneshot_mode)
+        desperateOverview_ui_set_exit_on_hide(true);
+
     if (desperateOverview_core_init(desperateOverview_ui_core_redraw_callback, NULL) != 0) {
         desperateOverview_ui_shutdown();
         return 1;
     }
     desperateOverview_ui_sync_with_core();
 
-    if (start_control_server() != 0) {
-        desperateOverview_core_shutdown();
-        desperateOverview_ui_shutdown();
-        return 1;
+    bool control_server_started = false;
+    if (!oneshot_mode) {
+        if (start_control_server() != 0) {
+            desperateOverview_core_shutdown();
+            desperateOverview_ui_shutdown();
+            return 1;
+        }
+        control_server_started = true;
     }
 
     if (force_show_on_start)
@@ -252,7 +262,8 @@ int main(int argc, char **argv) {
 
     gtk_main();
 
-    stop_control_server();
+    if (control_server_started)
+        stop_control_server();
     desperateOverview_core_shutdown();
     desperateOverview_ui_shutdown();
     return 0;

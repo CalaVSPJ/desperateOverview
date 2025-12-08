@@ -46,6 +46,17 @@ The build downloads the matching `yyjson` release on demand into `vendor/`.
 If you want to keep a shared copy elsewhere, set `YYJSON_DIR=/path/to/yyjson`
 when invoking `make`.
 
+## Configuration
+
+A user-specific config file can live at `~/.config/desperateOverview/config.ini`
+(or pass `--config /path/to/file`). See `docs/config.example.ini` for the full set
+of keys. Relevant behavioral settings include:
+
+- `drag_hold_delay_ms` – delay (ms) before a click starts a drag
+- `thumbnail_thread_count` – worker threads for thumbnail decoding
+- `follow_drop` – when `true`, the overlay switches to the workspace that a
+  dragged window was dropped onto (and issues a Hyprland workspace switch).
+
 ## Vendored Wayland protocols
 
 The project ships generated bindings for the following protocols:

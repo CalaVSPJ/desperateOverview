@@ -45,6 +45,8 @@ static void configure_layer_shell(GtkWindow *window);
 static void prune_empty_workspaces(void);
 static void handle_live_preview_ready(WindowInfo *win, GdkPixbuf *pixbuf, gpointer user_data);
 
+static gboolean g_exit_on_hide = FALSE;
+
 static void clear_window_resources(WindowInfo *win) {
     if (!win)
         return;
@@ -449,6 +451,8 @@ void close_overlay(void) {
     g_overlay_window = NULL;
     g_overlay_visible = FALSE;
     gtk_widget_destroy(window);
+    if (g_exit_on_hide)
+        g_idle_add(gtk_quit_idle, NULL);
 }
 
 static void on_overlay_destroy(GtkWidget *widget, gpointer data) {
@@ -537,6 +541,10 @@ void desperateOverview_ui_request_hide(void) {
 
 void desperateOverview_ui_request_quit(void) {
     g_idle_add(gtk_quit_idle, NULL);
+}
+
+void desperateOverview_ui_set_exit_on_hide(bool enabled) {
+    g_exit_on_hide = enabled ? TRUE : FALSE;
 }
 
 bool desperateOverview_ui_is_visible(void) {
