@@ -27,7 +27,7 @@ The project is written in C and depends on the following packages:
 ## Building
 
 ```sh
-make            # builds the desperateOverview binary
+make                # builds the desperateOverview binary
 sudo make install   # installs to /usr/local/bin by default
 sudo make uninstall # removes the installed binary
 ```
