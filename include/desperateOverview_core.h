@@ -27,13 +27,14 @@ typedef struct {
 } CoreWorkspace;
 
 typedef struct {
-    int mon_id;
-    int mon_width;
-    int mon_height;
-    int mon_off_x;
-    int mon_off_y;
-    int mon_transform;
-    int active_workspace;
+    int  mon_id;
+    int  mon_width;
+    int  mon_height;
+    int  mon_off_x;
+    int  mon_off_y;
+    int  mon_transform;
+    char mon_name[64];
+    int  active_workspace;
     int active_count;
     int active_list[MAX_WS];
     CoreWorkspace workspaces[MAX_WS];

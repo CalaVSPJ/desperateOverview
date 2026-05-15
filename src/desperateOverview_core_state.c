@@ -34,6 +34,7 @@ static int  g_mon_h         = 1080;
 static int  g_mon_x         = 0;
 static int  g_mon_y         = 0;
 static int  g_mon_transform = 0;
+static char g_mon_name[64]  = {0};
 static int  g_active_ws     = 1;
 
 static WorkspaceWindows g_ws[MAX_WS];
@@ -129,6 +130,10 @@ static void update_monitor_geometry_from_doc(yyjson_doc *doc) {
             g_mon_x  = desperateOverview_json_get_int(yyjson_obj_get(entry, "x"), g_mon_x);
             g_mon_y  = desperateOverview_json_get_int(yyjson_obj_get(entry, "y"), g_mon_y);
             g_mon_transform = desperateOverview_json_get_int(yyjson_obj_get(entry, "transform"), 0);
+            yyjson_val *name_v = yyjson_obj_get(entry, "name");
+            const char *n = (name_v && yyjson_is_str(name_v)) ? yyjson_get_str(name_v) : NULL;
+            if (n)
+                g_strlcpy(g_mon_name, n, sizeof(g_mon_name));
             found = true;
             break;
         }
@@ -378,6 +383,7 @@ void desperateOverview_core_copy_state(CoreState *out_state) {
     out_state->mon_off_x = g_mon_x;
     out_state->mon_off_y = g_mon_y;
     out_state->mon_transform = g_mon_transform;
+    g_strlcpy(out_state->mon_name, g_mon_name, sizeof(out_state->mon_name));
     out_state->active_workspace = g_active_ws;
     out_state->active_count = g_active_count;
     memcpy(out_state->active_list, g_active_list, sizeof(g_active_list));

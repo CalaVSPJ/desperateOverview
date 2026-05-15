@@ -10,7 +10,6 @@ typedef struct {
     GdkRGBA inactive_ws_bg;
     GdkRGBA active_ws_bg;
     GdkRGBA overlay_bg;
-    GdkRGBA drag_highlight;
     GdkRGBA new_ws_border;
     GdkRGBA new_ws_background;
     GdkRGBA new_ws_background_hover;
@@ -23,6 +22,7 @@ typedef struct {
 } OverlayConfig;
 
 void config_init(const char *override_path);
+void config_reload(void);
 void config_shutdown(void);
 const OverlayConfig *config_get(void);
 

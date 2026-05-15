@@ -7,7 +7,7 @@
 
 void desperateOverview_ui_start_drag_hold_timer(GtkWidget *widget, GdkEventButton *event);
 void desperateOverview_ui_cancel_drag_hold_timer(void);
-void desperateOverview_ui_set_hover_window(WindowInfo *win, gboolean bottom_view);
+void desperateOverview_ui_set_hover_window(WindowInfo *win);
 
 gboolean desperateOverview_ui_on_cell_motion(GtkWidget *widget, GdkEventMotion *event, gpointer data);
 gboolean desperateOverview_ui_on_cell_leave(GtkWidget *widget, GdkEventCrossing *event, gpointer data);
@@ -35,12 +35,6 @@ gboolean desperateOverview_ui_on_cell_drag_drop(GtkWidget *widget,
                                                 gint y,
                                                 guint time,
                                                 gpointer data);
-gboolean desperateOverview_ui_on_new_ws_drag_motion(GtkWidget *widget, GdkDragContext *context,
-                                                    gint x, gint y, guint time, gpointer data);
-void     desperateOverview_ui_on_new_ws_drag_leave(GtkWidget *widget, GdkDragContext *context,
-                                                   guint time, gpointer data);
-gboolean desperateOverview_ui_on_new_ws_drag_drop(GtkWidget *widget, GdkDragContext *context,
-                                                  gint x, gint y, guint time, gpointer data);
 gboolean desperateOverview_ui_on_key(GtkWidget *widget, GdkEventKey *event, gpointer data);
 
 #endif /* DESPERATEOVERVIEW_UI_EVENTS_H */

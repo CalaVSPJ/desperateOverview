@@ -23,15 +23,6 @@ void cairo_set_source_rgba_color(cairo_t *cr, const GdkRGBA *color) {
     cairo_set_source_rgba(cr, color->red, color->green, color->blue, color->alpha);
 }
 
-void ui_draw_window_border(cairo_t *cr, double rx, double ry, double rw, double rh, const OverlayConfig *cfg, double border_width) {
-    cairo_save(cr);
-    cairo_add_rounded_rect(cr, rx + 0.5, ry + 0.5, rw - 1.0, rh - 1.0, cfg->window_corner_radius);
-    cairo_set_source_rgba_color(cr, &cfg->window_border);
-    cairo_set_line_width(cr, border_width);
-    cairo_stroke(cr);
-    cairo_restore(cr);
-}
-
 void ui_draw_window_placeholder(cairo_t *cr, double rx, double ry, double rw, double rh, const OverlayConfig *cfg) {
     cairo_save(cr);
     cairo_add_rounded_rect(cr, rx, ry, rw, rh, cfg->window_corner_radius);

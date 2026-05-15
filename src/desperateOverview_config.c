@@ -83,13 +83,11 @@ static void set_defaults(OverlayConfig *cfg) {
     gdk_rgba_parse(&cfg->window_border, "#144344");
     cfg->window_border.alpha = 0.85;
     gdk_rgba_parse(&cfg->inactive_ws_bg, "#1a1a1f");
-    cfg->inactive_ws_bg.alpha = 0.95;
+    cfg->inactive_ws_bg.alpha = 0.50;
     gdk_rgba_parse(&cfg->active_ws_bg, "#282831");
-    cfg->active_ws_bg.alpha = 0.95;
+    cfg->active_ws_bg.alpha = 0.50;
     gdk_rgba_parse(&cfg->overlay_bg, "#09090d");
     cfg->overlay_bg.alpha = 0.40;
-    gdk_rgba_parse(&cfg->drag_highlight, "#ffcc33");
-    cfg->drag_highlight.alpha = 0.9;
     gdk_rgba_parse(&cfg->new_ws_border, "#9ad0ff");
     cfg->new_ws_border.alpha = 0.9;
     gdk_rgba_parse(&cfg->new_ws_background, "#4d7399");
@@ -99,7 +97,7 @@ static void set_defaults(OverlayConfig *cfg) {
     cfg->window_corner_radius = 4.0;
     cfg->drag_hold_delay_ms = 150;
     cfg->thumbnail_thread_count = 4;
-    cfg->fade_step = 0.08;
+    cfg->fade_step = 0.15;
     cfg->follow_drop = FALSE;
 }
 
@@ -127,10 +125,6 @@ static void load_from_file(const char *path, OverlayConfig *cfg) {
     config_try_color(kf, "inactive_workspace_background", &cfg->inactive_ws_bg);
     config_try_color(kf, "active_workspace_background", &cfg->active_ws_bg);
     config_try_color(kf, "overlay_background", &cfg->overlay_bg);
-    if (config_try_color(kf, "drag_highlight", &cfg->drag_highlight)) {
-        if (cfg->drag_highlight.alpha <= 0.0)
-            cfg->drag_highlight.alpha = 0.9;
-    }
     config_try_color(kf, "new_workspace_border", &cfg->new_ws_border);
     if (config_try_color(kf, "new_workspace_background", &cfg->new_ws_background))
         cfg->new_ws_background_hover = lighten_color(&cfg->new_ws_background, 0.15);
@@ -180,6 +174,29 @@ void config_init(const char *override_path) {
     g_free(g_config_override_path);
     g_config_override_path = override_path ? g_strdup(override_path) : NULL;
 
+    OverlayConfig cfg;
+    set_defaults(&cfg);
+
+    gchar *path = NULL;
+    if (g_config_override_path && *g_config_override_path) {
+        path = g_strdup(g_config_override_path);
+    } else {
+        path = default_config_path();
+        if (path && !g_file_test(path, G_FILE_TEST_EXISTS)) {
+            g_free(path);
+            path = NULL;
+        }
+    }
+
+    if (path) {
+        load_from_file(path, &cfg);
+        g_free(path);
+    }
+
+    g_config = cfg;
+}
+
+void config_reload(void) {
     OverlayConfig cfg;
     set_defaults(&cfg);
 

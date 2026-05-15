@@ -111,23 +111,23 @@ static void desperateOverview_ui_capture_live_preview(WindowInfo *win) {
     }
 }
 
-void desperateOverview_ui_build_live_previews(int active_workspace,
-                                              WorkspaceWindows workspaces[]) {
-    if (!workspaces || active_workspace <= 0 || active_workspace >= MAX_WS)
+void desperateOverview_ui_build_live_previews(WorkspaceWindows workspaces[]) {
+    if (!workspaces)
         return;
 
-    WorkspaceWindows *W = &workspaces[active_workspace];
-    if (!W)
-        return;
-
-    WindowInfo *targets[MAX_WINS_PER_WS];
+    WindowInfo *targets[9 * MAX_WINS_PER_WS];
     int target_count = 0;
-    for (int i = 0; i < W->count && target_count < MAX_WINS_PER_WS; ++i) {
-        WindowInfo *win = &W->wins[i];
-        if (!win || !win->addr[0])
-            continue;
-        win->live_cookie = g_live_cookie_counter++;
-        targets[target_count++] = win;
+    int cap = (int)(sizeof(targets) / sizeof(targets[0]));
+
+    for (int wsid = 1; wsid <= 9; ++wsid) {
+        WorkspaceWindows *W = &workspaces[wsid];
+        for (int i = 0; i < W->count && target_count < cap; ++i) {
+            WindowInfo *win = &W->wins[i];
+            if (!win || !win->addr[0])
+                continue;
+            win->live_cookie = g_live_cookie_counter++;
+            targets[target_count++] = win;
+        }
     }
 
     if (target_count <= 0)

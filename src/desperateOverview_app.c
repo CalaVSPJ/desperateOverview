@@ -29,8 +29,7 @@ static int start_control_server(void);
 static void stop_control_server(void);
 static void *control_server_thread(void *data);
 static void handle_control_command(const char *cmd);
-static int send_control_command(const char *cmd);
-static bool notify_existing_instance(const char *cmd);
+static bool send_command(const char *cmd);
 
 static void handle_control_command(const char *cmd) {
     if (!cmd || !*cmd)
@@ -136,34 +135,7 @@ static void stop_control_server(void) {
         unlink(g_control_sock_path);
 }
 
-static int send_control_command(const char *cmd) {
-    char path[256];
-    snprintf(path, sizeof(path), CONTROL_SOCKET_PATH_FMT, getuid());
-
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (fd < 0) {
-        perror("socket");
-        return 1;
-    }
-
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-    snprintf(addr.sun_path, sizeof(addr.sun_path),
-             "%.*s", (int)sizeof(addr.sun_path) - 1, path);
-
-    if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-        perror("connect");
-        close(fd);
-        return 1;
-    }
-
-    dprintf(fd, "%s\n", cmd);
-    close(fd);
-    return 0;
-}
-
-static bool notify_existing_instance(const char *cmd) {
+static bool send_command(const char *cmd) {
     char path[256];
     snprintf(path, sizeof(path), CONTROL_SOCKET_PATH_FMT, getuid());
 
@@ -210,9 +182,9 @@ int main(int argc, char **argv) {
             g_cli_css_path_set = true;
             ++i;
         } else if (strcmp(argv[i], "--toggle") == 0) {
-            if (send_control_command("TOGGLE") == 0)
+            if (send_command("TOGGLE"))
                 return 0;
-                        fprintf(stderr, "desperateOverview: no running instance, starting new overlay.\n");
+            fprintf(stderr, "desperateOverview: no running instance, starting new overlay.\n");
             force_show_on_start = true;
             skip_notify = true;
         } else if (strcmp(argv[i], "--show") == 0) {
@@ -220,16 +192,16 @@ int main(int argc, char **argv) {
             force_show_on_start = true;
             skip_notify = true;
         } else if (strcmp(argv[i], "--hide") == 0) {
-            return send_control_command("QUIT");
+            return send_command("QUIT") ? 0 : 1;
         } else if (strcmp(argv[i], "--quit") == 0) {
-            return send_control_command("QUIT");
+            return send_command("QUIT") ? 0 : 1;
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             return 1;
         }
     }
 
-    if (!skip_notify && notify_existing_instance("SHOW"))
+    if (!skip_notify && send_command("SHOW"))
         return 0;
 
     gtk_init(&argc, &argv);

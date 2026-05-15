@@ -12,11 +12,9 @@ void desperateOverview_ui_cache_window_preview(WindowInfo *win,
                                                double rx,
                                                double ry,
                                                double rw,
-                                               double rh,
-                                               gboolean bottom_view);
+                                               double rh);
 
 gboolean desperateOverview_ui_draw_background(GtkWidget *widget, cairo_t *cr, gpointer data);
-gboolean desperateOverview_ui_draw_current_workspace(GtkWidget *widget, cairo_t *cr, gpointer data);
 gboolean desperateOverview_ui_draw_cell(GtkWidget *widget, cairo_t *cr, gpointer data);
 
 #endif /* DESPERATEOVERVIEW_UI_RENDER_H */

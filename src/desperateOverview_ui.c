@@ -1,5 +1,5 @@
-#include "desperateOverview_ui_layout.h"
 #define _GNU_SOURCE
+#include "desperateOverview_ui_layout.h"
 #include <gtk/gtk.h>
 #include <gtk-layer-shell/gtk-layer-shell.h>
 #include <cairo.h>
@@ -7,7 +7,6 @@
 #include <gdk/gdk.h>
 #include <glib.h>
 #include <math.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -32,6 +31,8 @@ void desperateOverview_ui_set_css_override(const char *path) {
 }
 
 static void reset_interaction_state(void);
+static void *live_previews_bg_thread(void *data);
+static void *core_refresh_bg_thread(void *data);
 static gboolean on_overlay_window_button_press(GtkWidget *widget, GdkEventButton *event, gpointer data);
 static gboolean point_inside_widget(GtkWidget *target, GtkWidget *relative_to, double px, double py);
 static GtkWidget *build_overlay_window(void);
@@ -42,7 +43,6 @@ static gboolean hide_overlay_idle(gpointer data);
 static gboolean gtk_quit_idle(gpointer data);
 static GdkMonitor *match_monitor_for_window(GtkWidget *window);
 static void configure_layer_shell(GtkWindow *window);
-static void prune_empty_workspaces(void);
 static void handle_live_preview_ready(WindowInfo *win, GdkPixbuf *pixbuf, gpointer user_data);
 
 static gboolean g_exit_on_hide = FALSE;
@@ -76,19 +76,15 @@ static void clear_window_resources(WindowInfo *win) {
     }
     desperateOverview_live_cancel_tasks(win);
     win->top_preview_valid = FALSE;
-    win->bottom_preview_valid = FALSE;
     win->thumb_crc = 0;
 }
 
 static void reset_interaction_state(void) {
     desperateOverview_ui_cancel_drag_hold_timer();
     ui_drag_reset(&g_drag);
-    g_current_preview_rect.valid = FALSE;
     g_hover_window = NULL;
-    g_hover_window_bottom = FALSE;
     if (g_status_label)
         gtk_label_set_text(GTK_LABEL(g_status_label), "");
-    g_new_ws_target_hover = FALSE;
 }
 
 
@@ -97,30 +93,8 @@ void desperateOverview_ui_refresh_active_workspace_view(int wsid) {
         return;
     if (g_active_workspace != wsid)
         g_active_workspace = wsid;
-    if (g_overlay_visible)
-        desperateOverview_ui_build_live_previews(g_active_workspace, g_ws);
-    desperateOverview_ui_set_hover_window(NULL, FALSE);
+    desperateOverview_ui_set_hover_window(NULL);
     desperateOverview_ui_queue_cells_redraw();
-}
-
-static void prune_empty_workspaces(void) {
-    int write = 0;
-    for (int read = 0; read < g_active_count; ++read) {
-        int wsid = g_active_list[read];
-        WorkspaceWindows *W = &g_ws[wsid];
-        if (wsid == g_active_workspace || (W && W->count > 0)) {
-            if (write != read)
-                g_active_list[write] = g_active_list[read];
-            ++write;
-        }
-    }
-    if (write <= 0 && g_active_workspace > 0 && g_active_workspace < MAX_WS) {
-        g_active_list[0] = g_active_workspace;
-        if (!g_ws[g_active_workspace].name[0])
-            g_snprintf(g_ws[g_active_workspace].name, CORE_WS_NAME_LEN, "%d", g_active_workspace);
-        write = 1;
-    }
-    g_active_count = write;
 }
 
 static void clear_ui_state(void) {
@@ -136,7 +110,7 @@ static void clear_ui_state(void) {
     memset(g_active_list, 0, sizeof(g_active_list));
 }
 
-static void copy_core_state_to_ui(void) {
+static void copy_core_state_to_ui(gboolean decode_thumbs) {
     CoreState snapshot;
     memset(&snapshot, 0, sizeof(snapshot));
     desperateOverview_core_copy_state(&snapshot);
@@ -152,14 +126,7 @@ static void copy_core_state_to_ui(void) {
     g_active_workspace = snapshot.active_workspace;
     g_active_count = snapshot.active_count;
     memcpy(g_active_list, snapshot.active_list, sizeof(g_active_list));
-    g_current_preview_rect.valid = FALSE;
-    int eff_w = desperateOverview_ui_get_effective_mon_width();
-    int eff_h = desperateOverview_ui_get_effective_mon_height();
-    g_aspect_ratio = (eff_w > 0 && eff_h > 0)
-                     ? (double)eff_w / (double)eff_h
-                     : 16.0 / 9.0;
-    gboolean should_decode_thumbs = g_overlay_visible || g_force_decode_thumbs;
-    gboolean cache_active = should_decode_thumbs;
+    gboolean cache_active = decode_thumbs;
     guint64 cache_generation = cache_active ? desperateOverview_thumb_cache_bump_generation() : 0;
 
     for (int wsid = 0; wsid < MAX_WS; ++wsid) {
@@ -188,10 +155,9 @@ static void copy_core_state_to_ui(void) {
             src->title = NULL;
             dst->live_cookie = 0;
             dst->top_preview_valid = FALSE;
-            dst->bottom_preview_valid = FALSE;
             dst->thumb_crc = 0;
 
-            if (should_decode_thumbs && dst->thumb_b64 && dst->thumb_b64[0]) {
+            if (decode_thumbs && dst->thumb_b64 && dst->thumb_b64[0]) {
                 guint32 new_crc = desperateOverview_thumb_cache_crc(dst->thumb_b64);
                 dst->thumb_crc = new_crc;
                 GdkPixbuf *cached = NULL;
@@ -228,11 +194,17 @@ static void copy_core_state_to_ui(void) {
     if (cache_active)
         desperateOverview_thumb_cache_prune(cache_generation);
 
-    if (g_overlay_visible || g_force_live_previews)
-        desperateOverview_ui_build_live_previews(g_active_workspace, g_ws);
+    if (g_overlay_visible) {
+        GThread *t = g_thread_try_new("live-prev",
+                                      live_previews_bg_thread, NULL, NULL);
+        if (t) g_thread_unref(t);
+        else desperateOverview_ui_build_live_previews(g_ws);
+    }
 
     desperateOverview_core_free_state(&snapshot);
-    reset_interaction_state();
+    g_hover_window = NULL;
+    if (g_status_label && GTK_IS_LABEL(g_status_label))
+        gtk_label_set_text(GTK_LABEL(g_status_label), "");
 }
 
 static gboolean point_inside_widget(GtkWidget *target, GtkWidget *relative_to, double px, double py) {
@@ -261,30 +233,44 @@ static gboolean on_overlay_window_button_press(GtkWidget *widget, GdkEventButton
     if (event->button != GDK_BUTTON_PRIMARY)
         return FALSE;
 
-    gboolean inside_top = point_inside_widget(g_overlay_content, widget, event->x, event->y);
-    gboolean inside_bottom = point_inside_widget(g_current_preview, widget, event->x, event->y);
-
-    if (!inside_top && !inside_bottom) {
+    gboolean inside = point_inside_widget(g_overlay_content, widget, event->x, event->y);
+    if (!inside) {
         close_overlay();
         return TRUE;
     }
     return FALSE;
 }
 
+static void *live_previews_bg_thread(void *data) {
+    (void)data;
+    desperateOverview_ui_build_live_previews(g_ws);
+    return NULL;
+}
+
+static void *core_refresh_bg_thread(void *data) {
+    (void)data;
+    desperateOverview_core_request_full_refresh();
+    return NULL;
+}
+
 static gboolean show_overlay_idle(gpointer data) {
     (void)data;
     if (g_overlay_visible)
         return G_SOURCE_REMOVE;
+    config_reload();
     desperateOverview_core_set_thumbnail_capture_enabled(true);
-    if (desperateOverview_core_state_needs_refresh())
-        desperateOverview_core_request_full_refresh();
-    g_force_decode_thumbs = TRUE;
-    g_force_live_previews = TRUE;
-    copy_core_state_to_ui();
-    prune_empty_workspaces();
+    copy_core_state_to_ui(TRUE);
+    reset_interaction_state();
     g_overlay_window = build_overlay_window();
     g_overlay_visible = TRUE;
-    desperateOverview_ui_build_live_previews(g_active_workspace, g_ws);
+    if (desperateOverview_core_state_needs_refresh()) {
+        GThread *rt = g_thread_try_new("core-refresh", core_refresh_bg_thread, NULL, NULL);
+        if (rt) g_thread_unref(rt);
+        else desperateOverview_core_request_full_refresh();
+    }
+    GThread *lt = g_thread_try_new("live-prev", live_previews_bg_thread, NULL, NULL);
+    if (lt) g_thread_unref(lt);
+    else desperateOverview_ui_build_live_previews(g_ws);
     return G_SOURCE_REMOVE;
 }
 
@@ -300,46 +286,16 @@ static gboolean gtk_quit_idle(gpointer data) {
     return G_SOURCE_REMOVE;
 }
 
-static gboolean active_layout_changed(void) {
-    if (!g_overlay_window)
-        return FALSE;
-    if (g_built_active_count != g_active_count)
-        return TRUE;
-    if (memcmp(g_built_active_list, g_active_list,
-               sizeof(int) * g_active_count) != 0)
-        return TRUE;
-    for (int i = 0; i < g_active_count; ++i) {
-        int wsid = g_active_list[i];
-        const char *current = (wsid > 0 && wsid < MAX_WS && g_ws[wsid].name[0])
-                              ? g_ws[wsid].name
-                              : "";
-        if (strncmp(g_built_active_names[i], current,
-                    CORE_WS_NAME_LEN) != 0)
-            return TRUE;
-    }
-    int active_idx = desperateOverview_ui_find_active_index(g_active_workspace);
-    if (active_idx >= 0 && active_idx < g_active_count &&
-        g_active_workspace != g_built_active_list[active_idx])
-        return TRUE;
-    return FALSE;
-}
-
 static gboolean overlay_idle_redraw(gpointer data) {
     (void)data;
     g_mutex_lock(&g_redraw_lock);
     g_redraw_pending = FALSE;
     g_mutex_unlock(&g_redraw_lock);
 
-    copy_core_state_to_ui();
-    prune_empty_workspaces();
+    copy_core_state_to_ui(TRUE);
     if (!g_overlay_visible)
         return G_SOURCE_REMOVE;
-
-    if (active_layout_changed()) {
-        desperateOverview_ui_rebuild_overlay_content();
-    } else {
-        desperateOverview_ui_queue_cells_redraw();
-    }
+    desperateOverview_ui_queue_cells_redraw();
     return G_SOURCE_REMOVE;
 }
 
@@ -385,6 +341,12 @@ static gboolean fade_in_cb(gpointer data) {
 
 static GtkWidget *build_overlay_window(void) {
     GtkWidget *window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_widget_set_name(window, "desperateOverview-overlay");
+    GdkScreen *screen = gtk_widget_get_screen(window);
+    GdkVisual *rgba_visual = screen ? gdk_screen_get_rgba_visual(screen) : NULL;
+    if (rgba_visual)
+        gtk_widget_set_visual(window, rgba_visual);
+    gtk_widget_set_app_paintable(window, TRUE);
     configure_layer_shell(GTK_WINDOW(window));
     gtk_widget_add_events(window, GDK_KEY_PRESS_MASK | GDK_BUTTON_PRESS_MASK);
     gtk_widget_set_can_focus(window, TRUE);
@@ -411,7 +373,6 @@ static GtkWidget *build_overlay_window(void) {
     g_root_box = root_box;
 
     desperateOverview_ui_build_overlay_content(root_box);
-
     gtk_widget_set_opacity(window, 0.0);
     gtk_widget_show_all(window);
     gtk_window_present(GTK_WINDOW(window));
@@ -421,13 +382,6 @@ static GtkWidget *build_overlay_window(void) {
         g_fade_source_id = 0;
     }
     g_fade_source_id = g_timeout_add(16, fade_in_cb, window);
-    g_built_active_count = g_active_count;
-    memcpy(g_built_active_list, g_active_list, sizeof(g_active_list));
-    for (int i = 0; i < g_active_count && i < MAX_WS; ++i) {
-        int wsid = g_active_list[i];
-        const char *name = desperateOverview_ui_workspace_display_name(wsid);
-        g_strlcpy(g_built_active_names[i], name ? name : "", CORE_WS_NAME_LEN);
-    }
     return window;
 }
 
@@ -439,11 +393,9 @@ void close_overlay(void) {
     desperateOverview_ui_cancel_drag_hold_timer();
     reset_interaction_state();
     g_overlay_content = NULL;
-    g_current_preview = NULL;
     g_status_label = NULL;
     g_root_box = NULL;
     g_root_overlay = NULL;
-    g_new_ws_target = NULL;
 
     if (g_fade_source_id) {
         g_source_remove(g_fade_source_id);
@@ -501,7 +453,7 @@ static void configure_layer_shell(GtkWindow *window) {
     gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_LEFT, TRUE);
     gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_RIGHT, TRUE);
     gtk_layer_set_anchor(window, GTK_LAYER_SHELL_EDGE_BOTTOM, TRUE);
-    gtk_layer_set_exclusive_zone(window, 0);
+    gtk_layer_set_exclusive_zone(window, -1);
     gtk_layer_set_keyboard_interactivity(window, TRUE);
 
     GdkMonitor *monitor = match_monitor_for_window(GTK_WIDGET(window));
@@ -531,7 +483,7 @@ void desperateOverview_ui_shutdown(void) {
 }
 
 void desperateOverview_ui_sync_with_core(void) {
-    copy_core_state_to_ui();
+    copy_core_state_to_ui(FALSE);
 }
 
 void desperateOverview_ui_request_show(void) {

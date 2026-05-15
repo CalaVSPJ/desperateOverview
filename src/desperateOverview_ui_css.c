@@ -22,7 +22,6 @@ void desperateOverview_css_init(void) {
 
     if (g_css_override_path && g_css_override_path[0]) {
         if (gtk_css_provider_load_from_path(provider, g_css_override_path, NULL)) {
-            g_message("desperateOverview: loaded CSS from override %s", g_css_override_path);
             loaded = TRUE;
         } else {
             g_warning("desperateOverview: failed to load CSS override %s", g_css_override_path);
@@ -45,7 +44,6 @@ void desperateOverview_css_init(void) {
         const char *path = search_paths[i];
         if (path && g_file_test(path, G_FILE_TEST_EXISTS)) {
             if (gtk_css_provider_load_from_path(provider, path, NULL)) {
-                g_message("desperateOverview: loaded CSS from %s", path);
                 loaded = TRUE;
                 break;
             }
@@ -59,17 +57,8 @@ void desperateOverview_css_init(void) {
             ".desperateOverview-status {\n"
             "  color: #cad4ff;\n"
             "  font-weight: 600;\n"
-            "}\n"
-            ".desperateOverview-ghost {\n"
-            "  transition: opacity 120ms ease;\n"
             "}\n";
         gtk_css_provider_load_from_data(provider, fallback_css, -1, NULL);
-        loaded = TRUE;
-    }
-
-    if (!loaded) {
-        g_object_unref(provider);
-        return;
     }
 
     GdkScreen *screen = gdk_screen_get_default();

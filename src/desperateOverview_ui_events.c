@@ -8,11 +8,10 @@
 #include "desperateOverview_core.h"
 #include "desperateOverview_config.h"
 #include "desperateOverview_geometry.h"
+#include "desperateOverview_ui.h"
 #include "desperateOverview_ui_drag.h"
 #include "desperateOverview_ui_render.h"
 #include "desperateOverview_ui_state.h"
-
-extern void close_overlay(void);
 
 static const double G_DRAG_HOLD_MOVE_THRESHOLD = 3.0;
 
@@ -34,31 +33,19 @@ static int resolve_workspace_id(gpointer data) {
     return wsid;
 }
 
-static WindowInfo *hit_test_window_view(int wsid, double px, double py, gboolean bottom_view) {
+static WindowInfo *hit_test_window_view(int wsid, double px, double py) {
     if (wsid <= 0 || wsid >= MAX_WS)
         return NULL;
 
     WorkspaceWindows *W = &g_ws[wsid];
     for (int i = 0; i < W->count; ++i) {
         WindowInfo *win = &W->wins[i];
-        double x0, y0, w, h;
-        gboolean valid = bottom_view ? win->bottom_preview_valid : win->top_preview_valid;
-        if (!valid)
+        if (!win->top_preview_valid)
             continue;
-        if (bottom_view) {
-            x0 = win->bottom_preview_x;
-            y0 = win->bottom_preview_y;
-            w = win->bottom_preview_w;
-            h = win->bottom_preview_h;
-        } else {
-            x0 = win->top_preview_x;
-            y0 = win->top_preview_y;
-            w = win->top_preview_w;
-            h = win->top_preview_h;
-        }
-        double x1 = x0 + w;
-        double y1 = y0 + h;
-        if (px >= x0 && px <= x1 && py >= y0 && py <= y1)
+        double x1 = win->top_preview_x + win->top_preview_w;
+        double y1 = win->top_preview_y + win->top_preview_h;
+        if (px >= win->top_preview_x && px <= x1 &&
+            py >= win->top_preview_y && py <= y1)
             return win;
     }
     return NULL;
@@ -79,13 +66,12 @@ static gchar *build_window_hover_text(const WindowInfo *win) {
     return g_strdup(text);
 }
 
-void desperateOverview_ui_set_hover_window(WindowInfo *win, gboolean bottom_view) {
+void desperateOverview_ui_set_hover_window(WindowInfo *win) {
     if (!g_overlay_visible)
         return;
-    if (win == g_hover_window && (win ? bottom_view : FALSE) == g_hover_window_bottom)
+    if (win == g_hover_window)
         return;
     g_hover_window = win;
-    g_hover_window_bottom = win ? bottom_view : FALSE;
     if (g_status_label && GTK_IS_LABEL(g_status_label)) {
         gchar *text = win ? build_window_hover_text(win) : NULL;
         gtk_label_set_text(GTK_LABEL(g_status_label), text ? text : "");
@@ -139,10 +125,10 @@ void desperateOverview_ui_cancel_drag_hold_timer(void) {
 }
 
 gboolean desperateOverview_ui_on_cell_motion(GtkWidget *widget, GdkEventMotion *event, gpointer data) {
-    gboolean bottom_view = (widget == g_current_preview);
+    (void)widget;
     int wsid = resolve_workspace_id(data);
-    WindowInfo *hit = hit_test_window_view(wsid, event->x, event->y, bottom_view);
-    desperateOverview_ui_set_hover_window(hit, bottom_view);
+    WindowInfo *hit = hit_test_window_view(wsid, event->x, event->y);
+    desperateOverview_ui_set_hover_window(hit);
 
     if (g_drag.hold_source_id && widget == g_drag.hold_widget) {
         double dx = fabs(event->x - g_drag.hold_start_x);
@@ -158,7 +144,7 @@ gboolean desperateOverview_ui_on_cell_leave(GtkWidget *widget, GdkEventCrossing 
     (void)event;
     (void)data;
     if (!g_drag.in_progress)
-        desperateOverview_ui_set_hover_window(NULL, FALSE);
+        desperateOverview_ui_set_hover_window(NULL);
     return FALSE;
 }
 
@@ -230,9 +216,7 @@ gboolean desperateOverview_ui_on_cell_button_press(GtkWidget *widget, GdkEventBu
 
     desperateOverview_ui_cancel_drag_hold_timer();
     int wsid = resolve_workspace_id(data);
-    gboolean bottom_view = (widget == g_current_preview);
-    WindowInfo *hit = hit_test_window_view(wsid, event->x, event->y, bottom_view);
-
+    WindowInfo *hit = hit_test_window_view(wsid, event->x, event->y);
     if (hit) {
         g_drag.active_window = hit;
         g_drag.source_workspace = wsid;
@@ -259,44 +243,16 @@ gboolean desperateOverview_ui_on_cell_button_release(GtkWidget *widget, GdkEvent
     desperateOverview_ui_cancel_drag_hold_timer();
 
     int wsid = resolve_workspace_id(data);
-    gboolean bottom_view = (widget == g_current_preview);
 
     if (!g_drag.in_progress &&
-        g_drag.pending_window_click &&
-        wsid == g_drag.pending_ws_id &&
-        !bottom_view) {
+        (g_drag.pending_window_click || g_drag.pending_ws_click) &&
+        wsid == g_drag.pending_ws_id) {
         g_drag.pending_window_click = FALSE;
         g_drag.pending_ws_click = FALSE;
         g_drag.pending_ws_id = -1;
-        int idx = desperateOverview_ui_find_active_index(wsid);
         desperateOverview_ui_refresh_active_workspace_view(wsid);
-        if (idx >= 0)
-                    desperateOverview_core_switch_workspace(desperateOverview_ui_workspace_display_name(g_active_list[idx]), wsid);
-        return TRUE;
-    }
-
-    if (!g_drag.in_progress &&
-        g_drag.pending_ws_click &&
-        wsid == g_drag.pending_ws_id &&
-        !bottom_view) {
-        g_drag.pending_ws_click = FALSE;
-        g_drag.pending_window_click = FALSE;
-        g_drag.pending_ws_id = -1;
-        int idx = desperateOverview_ui_find_active_index(wsid);
-        desperateOverview_ui_refresh_active_workspace_view(wsid);
-        if (idx >= 0)
-                    desperateOverview_core_switch_workspace(desperateOverview_ui_workspace_display_name(g_active_list[idx]), wsid);
-        return TRUE;
-    }
-
-    if (!g_drag.in_progress && bottom_view) {
-        g_drag.pending_ws_click = FALSE;
-        g_drag.pending_window_click = FALSE;
-        g_drag.pending_ws_id = -1;
-        int idx = desperateOverview_ui_find_active_index(wsid);
         close_overlay();
-        if (idx >= 0)
-                    desperateOverview_core_switch_workspace(desperateOverview_ui_workspace_display_name(g_active_list[idx]), wsid);
+        desperateOverview_core_switch_workspace(desperateOverview_ui_workspace_display_name(wsid), wsid);
         return TRUE;
     }
 
@@ -314,7 +270,6 @@ gboolean desperateOverview_ui_on_cell_button_release(GtkWidget *widget, GdkEvent
 void desperateOverview_ui_on_cell_drag_begin(GtkWidget *widget, GdkDragContext *context, gpointer data) {
     (void)widget;
     int wsid = resolve_workspace_id(data);
-
     desperateOverview_ui_cancel_drag_hold_timer();
 
     if (!g_drag.active_window || wsid != g_drag.source_workspace) {
@@ -421,102 +376,58 @@ gboolean desperateOverview_ui_on_cell_drag_drop(GtkWidget *widget,
     return TRUE;
 }
 
-static int find_first_free_workspace(void) {
-    for (int wsid = 1; wsid < MAX_WS; ++wsid) {
-        gboolean used = FALSE;
-        for (int i = 0; i < g_active_count; ++i) {
-            if (g_active_list[i] == wsid) {
-                used = TRUE;
-                break;
-            }
-        }
-        if (!used)
-            return wsid;
-    }
-    return -1;
-}
-
-gboolean desperateOverview_ui_on_new_ws_drag_motion(GtkWidget *widget, GdkDragContext *context,
-                                                    gint x, gint y, guint time, gpointer data) {
-    (void)context; (void)x; (void)y; (void)time; (void)data;
-    if (!g_new_ws_target_hover) {
-        g_new_ws_target_hover = TRUE;
-        gtk_widget_queue_draw(widget);
-    }
-    return TRUE;
-}
-
-void desperateOverview_ui_on_new_ws_drag_leave(GtkWidget *widget, GdkDragContext *context,
-                                               guint time, gpointer data) {
-    (void)context; (void)time; (void)data;
-    if (g_new_ws_target_hover) {
-        g_new_ws_target_hover = FALSE;
-        gtk_widget_queue_draw(widget);
-    }
-}
-
-gboolean desperateOverview_ui_on_new_ws_drag_drop(GtkWidget *widget, GdkDragContext *context,
-                                                  gint x, gint y, guint time, gpointer data) {
-    (void)x; (void)y; (void)data;
-    g_new_ws_target_hover = FALSE;
-    gtk_widget_queue_draw(widget);
-
-    if (!g_drag.active_window || !g_drag.active_window->addr[0]) {
-        gtk_drag_finish(context, FALSE, FALSE, time);
-        return TRUE;
-    }
-
-    int free_ws = find_first_free_workspace();
-    if (free_ws <= 0) {
-        gtk_drag_finish(context, FALSE, FALSE, time);
-        return TRUE;
-    }
-
-    gtk_drag_finish(context, TRUE, FALSE, time);
-                desperateOverview_core_move_window(g_drag.active_window->addr, free_ws);
-    desperateOverview_ui_queue_cells_redraw();
-    follow_drop_to_workspace(free_ws);
-    return TRUE;
-}
-
 gboolean desperateOverview_ui_on_key(GtkWidget *widget, GdkEventKey *event, gpointer data) {
     (void)widget; (void)data;
+
     if (event->keyval == GDK_KEY_Escape) {
         close_overlay();
         return TRUE;
     }
 
-    if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_KP_Left ||
-        event->keyval == GDK_KEY_Right || event->keyval == GDK_KEY_KP_Right) {
-        if (g_active_count <= 0)
-            return TRUE;
-
-        int current_idx = desperateOverview_ui_find_active_index(g_active_workspace);
-        if (current_idx < 0)
-            current_idx = 0;
-
-        int target_idx = current_idx;
-        if (event->keyval == GDK_KEY_Left || event->keyval == GDK_KEY_KP_Left) {
-            target_idx = (current_idx - 1 + g_active_count) % g_active_count;
-        } else {
-            target_idx = (current_idx + 1) % g_active_count;
-        }
-
-        int target_ws = g_active_list[target_idx];
-        desperateOverview_ui_refresh_active_workspace_view(target_ws);
-                    desperateOverview_core_switch_workspace(desperateOverview_ui_workspace_display_name(g_active_list[target_idx]), target_ws);
-        return TRUE;
-    }
-
     if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter) {
-        if (g_active_workspace > 0) {
-            int idx = desperateOverview_ui_find_active_index(g_active_workspace);
+        if (g_active_workspace >= 1 && g_active_workspace <= 9) {
             close_overlay();
-            if (idx >= 0)
-                            desperateOverview_core_switch_workspace(desperateOverview_ui_workspace_display_name(g_active_list[idx]), g_active_workspace);
+            desperateOverview_core_switch_workspace(
+                desperateOverview_ui_workspace_display_name(g_active_workspace),
+                g_active_workspace);
         }
         return TRUE;
     }
+
+    int ws = g_active_workspace;
+    if (ws < 1 || ws > 9) ws = 1;
+    int row = (ws - 1) / 3;
+    int col = (ws - 1) % 3;
+    int target_ws = -1;
+
+    if (event->keyval >= GDK_KEY_1 && event->keyval <= GDK_KEY_9) {
+        target_ws = (int)(event->keyval - GDK_KEY_1) + 1;
+    } else {
+        switch (event->keyval) {
+            case GDK_KEY_Left:  case GDK_KEY_KP_Left:
+                target_ws = row * 3 + (col + 2) % 3 + 1;
+                break;
+            case GDK_KEY_Right: case GDK_KEY_KP_Right:
+                target_ws = row * 3 + (col + 1) % 3 + 1;
+                break;
+            case GDK_KEY_Up:    case GDK_KEY_KP_Up:
+                target_ws = ((row + 2) % 3) * 3 + col + 1;
+                break;
+            case GDK_KEY_Down:  case GDK_KEY_KP_Down:
+                target_ws = ((row + 1) % 3) * 3 + col + 1;
+                break;
+            default:
+                break;
+        }
+    }
+
+    if (target_ws >= 1 && target_ws <= 9) {
+        g_active_workspace = target_ws;
+        desperateOverview_ui_set_hover_window(NULL);
+        desperateOverview_ui_queue_cells_redraw();
+        return TRUE;
+    }
+
     return FALSE;
 }
 

@@ -8,8 +8,7 @@ typedef void (*DesperateOverviewLiveApply)(WindowInfo *win, GdkPixbuf *pixbuf, g
 
 void desperateOverview_ui_live_init(DesperateOverviewLiveApply cb, gpointer user_data);
 void desperateOverview_live_cancel_tasks(WindowInfo *win);
-void desperateOverview_ui_build_live_previews(int active_workspace,
-                                              WorkspaceWindows workspaces[]);
+void desperateOverview_ui_build_live_previews(WorkspaceWindows workspaces[]);
 
 #endif /* DESPERATEOVERVIEW_UI_LIVE_H */
 

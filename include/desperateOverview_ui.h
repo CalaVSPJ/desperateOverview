@@ -13,5 +13,6 @@ void desperateOverview_ui_request_quit(void);
 void desperateOverview_ui_set_exit_on_hide(bool enabled);
 bool desperateOverview_ui_is_visible(void);
 void desperateOverview_ui_core_redraw_callback(void *user_data);
+void close_overlay(void);
 
 #endif /* DESPERATEOVERVIEW_UI_H */
