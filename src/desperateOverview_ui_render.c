@@ -3,7 +3,6 @@
 #include "desperateOverview_ui_render.h"
 
 #include <math.h>
-#include <string.h>
 
 #include "desperateOverview_config.h"
 #include "desperateOverview_geometry.h"
