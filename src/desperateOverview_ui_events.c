@@ -6,7 +6,6 @@
 #include <string.h>
 
 #include "desperateOverview_core.h"
-#include "desperateOverview_types.h"
 #include "desperateOverview_config.h"
 #include "desperateOverview_geometry.h"
 #include "desperateOverview_ui.h"

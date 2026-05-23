@@ -39,7 +39,6 @@ GMutex g_redraw_lock;
 gboolean g_redraw_pending = FALSE;
 
 WindowInfo *g_hover_window = NULL;
-GtkWidget  *g_status_label = NULL;
 const char *G_LAYER_NAMESPACE = "despoverlay";
 
 static gboolean monitor_transform_is_rotated(void) {

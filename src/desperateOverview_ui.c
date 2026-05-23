@@ -83,8 +83,6 @@ static void reset_interaction_state(void) {
     desperateOverview_ui_cancel_drag_hold_timer();
     ui_drag_reset(&g_drag);
     g_hover_window = NULL;
-    if (g_status_label)
-        gtk_label_set_text(GTK_LABEL(g_status_label), "");
 }
 
 
@@ -116,6 +114,7 @@ static void copy_core_state_to_ui(gboolean decode_thumbs) {
     desperateOverview_core_copy_state(&snapshot);
 
     clear_ui_state();
+    g_hover_window = NULL;
 
     g_mon_id       = snapshot.mon_id;
     g_mon_width    = snapshot.mon_width;
@@ -155,6 +154,7 @@ static void copy_core_state_to_ui(gboolean decode_thumbs) {
             src->title = NULL;
             dst->live_cookie = 0;
             dst->top_preview_valid = FALSE;
+            dst->close_btn_valid = FALSE;
             dst->thumb_crc = 0;
 
             if (decode_thumbs && dst->thumb_b64 && dst->thumb_b64[0]) {
@@ -202,9 +202,6 @@ static void copy_core_state_to_ui(gboolean decode_thumbs) {
     }
 
     desperateOverview_core_free_state(&snapshot);
-    g_hover_window = NULL;
-    if (g_status_label && GTK_IS_LABEL(g_status_label))
-        gtk_label_set_text(GTK_LABEL(g_status_label), "");
 }
 
 static gboolean point_inside_widget(GtkWidget *target, GtkWidget *relative_to, double px, double py) {
@@ -393,7 +390,6 @@ void close_overlay(void) {
     desperateOverview_ui_cancel_drag_hold_timer();
     reset_interaction_state();
     g_overlay_content = NULL;
-    g_status_label = NULL;
     g_root_box = NULL;
     g_root_overlay = NULL;
 
@@ -415,7 +411,6 @@ static void on_overlay_destroy(GtkWidget *widget, gpointer data) {
     if (g_overlay_window == widget)
         g_overlay_window = NULL;
     g_overlay_visible = FALSE;
-    g_status_label = NULL;
     g_root_box = NULL;
     g_root_overlay = NULL;
 }

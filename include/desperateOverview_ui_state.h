@@ -43,7 +43,6 @@ extern GMutex g_redraw_lock;
 extern gboolean g_redraw_pending;
 
 extern WindowInfo *g_hover_window;
-extern GtkWidget  *g_status_label;
 
 extern const char  *G_LAYER_NAMESPACE;
 
