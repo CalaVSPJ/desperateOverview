@@ -20,6 +20,8 @@ typedef struct {
     guint64 live_cookie;
     double top_preview_x, top_preview_y, top_preview_w, top_preview_h;
     gboolean top_preview_valid;
+    double close_btn_cx, close_btn_cy, close_btn_r;
+    gboolean close_btn_valid;
 } WindowInfo;
 
 typedef struct {

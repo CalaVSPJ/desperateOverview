@@ -3,13 +3,17 @@
 #include "desperateOverview_ui_render.h"
 
 #include <math.h>
+#include <string.h>
 
 #include "desperateOverview_config.h"
 #include "desperateOverview_geometry.h"
 #include "desperateOverview_ui_drawing.h"
 #include "desperateOverview_ui_state.h"
 
-static const double G_WINDOW_BORDER_WIDTH = 2.0;
+static const double G_WINDOW_BORDER_WIDTH      = 2.0;
+static const double G_WINDOW_BORDER_HOVER_W    = 2.5;
+static const double G_CLOSE_BTN_RADIUS         = 13.0;
+static const double G_CLOSE_BTN_RADIUS_SMALL   = 9.0;
 
 GdkPixbuf *desperateOverview_ui_orient_pixbuf(GdkPixbuf *src) {
     if (!src)
@@ -56,34 +60,34 @@ static void draw_window_preview(cairo_t *cr,
         return;
 
     gboolean is_dragged = g_drag.in_progress && g_drag.active_window == win;
+    gboolean is_hovered = !is_dragged && (win == g_hover_window);
+
     if (is_dragged)
         cairo_push_group(cr);
 
-    /* Border: filled ring between outer rect and inset inner rect.
-     * EVEN_ODD rule cuts out the inner area, leaving only the frame.
-     * Corners are solid filled arcs — visible against any background. */
+    /* Border: highlight when hovered, normal otherwise. */
     {
+        double bw = is_hovered ? G_WINDOW_BORDER_HOVER_W : G_WINDOW_BORDER_WIDTH;
         cairo_save(cr);
         cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
         cairo_add_rounded_rect(cr, rx, ry, rw, rh, cfg->window_corner_radius);
-        double inner_r = fmax(0.0, cfg->window_corner_radius - G_WINDOW_BORDER_WIDTH);
-        cairo_add_rounded_rect(cr,
-                               rx + G_WINDOW_BORDER_WIDTH,
-                               ry + G_WINDOW_BORDER_WIDTH,
-                               rw - 2.0 * G_WINDOW_BORDER_WIDTH,
-                               rh - 2.0 * G_WINDOW_BORDER_WIDTH,
-                               inner_r);
-        cairo_set_source_rgba_color(cr, &cfg->window_border);
+        double inner_r = fmax(0.0, cfg->window_corner_radius - bw);
+        cairo_add_rounded_rect(cr, rx + bw, ry + bw, rw - 2.0 * bw, rh - 2.0 * bw, inner_r);
+        if (is_hovered)
+            cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.80);
+        else
+            cairo_set_source_rgba_color(cr, &cfg->window_border);
         cairo_fill(cr);
         cairo_restore(cr);
     }
 
     /* Content: thumbnail or placeholder drawn inside the inner area. */
-    double ix = rx + G_WINDOW_BORDER_WIDTH;
-    double iy = ry + G_WINDOW_BORDER_WIDTH;
-    double iw = rw - 2.0 * G_WINDOW_BORDER_WIDTH;
-    double ih = rh - 2.0 * G_WINDOW_BORDER_WIDTH;
-    double ir = fmax(0.0, cfg->window_corner_radius - G_WINDOW_BORDER_WIDTH);
+    double bw = is_hovered ? G_WINDOW_BORDER_HOVER_W : G_WINDOW_BORDER_WIDTH;
+    double ix = rx + bw;
+    double iy = ry + bw;
+    double iw = rw - 2.0 * bw;
+    double ih = rh - 2.0 * bw;
+    double ir = fmax(0.0, cfg->window_corner_radius - bw);
 
     if (iw > 0 && ih > 0) {
         if (source) {
@@ -113,6 +117,83 @@ static void draw_window_preview(cairo_t *cr,
             ui_draw_window_placeholder(cr, ix, iy, iw, ih, cfg);
             cairo_restore(cr);
         }
+
+        /* Title label centered in thumbnail when hovered. */
+        if (is_hovered && iw > 20 && ih > 14) {
+            const char *label = NULL;
+            if (win->class_name && *win->class_name)
+                label = win->class_name;
+            else if (win->initial_class && *win->initial_class)
+                label = win->initial_class;
+            else if (win->title && *win->title)
+                label = win->title;
+
+            if (label && *label) {
+                double font_sz = fmin(fmax(ih * 0.16, 10.0), 14.0);
+                double pad     = font_sz + 8.0;
+
+                cairo_save(cr);
+                cairo_add_rounded_rect(cr, ix, iy, iw, ih, ir);
+                cairo_clip(cr);
+
+                /* Semi-transparent overlay covering the full thumbnail. */
+                cairo_set_source_rgba(cr, 0.0, 0.0, 0.0, 0.45);
+                cairo_rectangle(cr, ix, iy, iw, ih);
+                cairo_fill(cr);
+
+                cairo_select_font_face(cr, "sans",
+                                       CAIRO_FONT_SLANT_NORMAL,
+                                       CAIRO_FONT_WEIGHT_BOLD);
+                cairo_set_font_size(cr, font_sz);
+
+                cairo_text_extents_t te;
+                cairo_text_extents(cr, label, &te);
+                double tx = ix + (iw - te.width) / 2.0 - te.x_bearing;
+                double ty = iy + (ih - te.height) / 2.0 - te.y_bearing;
+                if (tx < ix + pad) tx = ix + pad;
+
+                cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.95);
+                cairo_move_to(cr, tx, ty);
+                cairo_show_text(cr, label);
+
+                cairo_restore(cr);
+            }
+        }
+    }
+
+    /* Close button in top-right corner when hovered. */
+    if (is_hovered) {
+        double btn_r = (fmin(rw, rh) < 40.0) ? G_CLOSE_BTN_RADIUS_SMALL : G_CLOSE_BTN_RADIUS;
+        double btn_cx = rx + btn_r + 3.0;
+        double btn_cy = ry + btn_r + 3.0;
+
+        win->close_btn_cx    = btn_cx;
+        win->close_btn_cy    = btn_cy;
+        win->close_btn_r     = btn_r;
+        win->close_btn_valid = TRUE;
+
+        cairo_save(cr);
+        cairo_arc(cr, btn_cx, btn_cy, btn_r, 0, 2.0 * M_PI);
+        cairo_set_source_rgba(cr, 0.12, 0.12, 0.12, 0.88);
+        cairo_fill(cr);
+
+        cairo_arc(cr, btn_cx, btn_cy, btn_r, 0, 2.0 * M_PI);
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.55);
+        cairo_set_line_width(cr, 1.0);
+        cairo_stroke(cr);
+
+        double xoff = btn_r * 0.42;
+        cairo_set_source_rgba(cr, 1.0, 1.0, 1.0, 0.95);
+        cairo_set_line_width(cr, 1.5);
+        cairo_set_line_cap(cr, CAIRO_LINE_CAP_ROUND);
+        cairo_move_to(cr, btn_cx - xoff, btn_cy - xoff);
+        cairo_line_to(cr, btn_cx + xoff, btn_cy + xoff);
+        cairo_move_to(cr, btn_cx + xoff, btn_cy - xoff);
+        cairo_line_to(cr, btn_cx - xoff, btn_cy + xoff);
+        cairo_stroke(cr);
+        cairo_restore(cr);
+    } else {
+        win->close_btn_valid = FALSE;
     }
 
     if (is_dragged) {
@@ -202,6 +283,7 @@ gboolean desperateOverview_ui_draw_cell(GtkWidget *widget, cairo_t *cr, gpointer
     for (int i = 0; i < Wws->count; ++i) {
         WindowInfo *win = &Wws->wins[i];
         win->top_preview_valid = FALSE;
+        win->close_btn_valid   = FALSE;
         if (win->w <= 0 || win->h <= 0)
             continue;
 

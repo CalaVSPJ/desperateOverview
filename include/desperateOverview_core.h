@@ -49,6 +49,7 @@ void desperateOverview_core_copy_state(CoreState *out_state);
 void desperateOverview_core_free_state(CoreState *state);
 
 void desperateOverview_core_move_window(const char *addr, int wsid);
+void desperateOverview_core_close_window(const char *addr);
 void desperateOverview_core_switch_workspace(const char *name, int wsid);
 char *desperateOverview_core_capture_window_raw(const char *addr);
 void desperateOverview_core_set_thumbnail_capture_enabled(bool enabled);

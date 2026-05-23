@@ -34,17 +34,6 @@ void desperateOverview_ui_build_overlay_content(GtkWidget *root_box) {
     gtk_widget_set_vexpand(grid, TRUE);
     gtk_box_pack_start(GTK_BOX(root_box), grid, TRUE, TRUE, 0);
 
-    GtkWidget *status_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-    gtk_widget_set_hexpand(status_box, TRUE);
-    gtk_widget_set_margin_bottom(status_box, 6);
-    gtk_box_pack_start(GTK_BOX(root_box), status_box, FALSE, FALSE, 0);
-    g_status_label = gtk_label_new("");
-    gtk_widget_set_halign(g_status_label, GTK_ALIGN_CENTER);
-    gtk_widget_set_valign(g_status_label, GTK_ALIGN_CENTER);
-    gtk_style_context_add_class(gtk_widget_get_style_context(g_status_label),
-                                "desperateOverview-status");
-    gtk_box_pack_start(GTK_BOX(status_box), g_status_label, TRUE, TRUE, 0);
-
     for (int wsid = 1; wsid <= GRID_WS_COUNT; ++wsid) {
         int col = (wsid - 1) % GRID_COLS;
         int row = (wsid - 1) / GRID_COLS;

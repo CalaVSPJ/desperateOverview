@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "desperateOverview_core.h"
+#include "desperateOverview_types.h"
 #include "desperateOverview_config.h"
 #include "desperateOverview_geometry.h"
 #include "desperateOverview_ui.h"
@@ -51,20 +52,6 @@ static WindowInfo *hit_test_window_view(int wsid, double px, double py) {
     return NULL;
 }
 
-static gchar *build_window_hover_text(const WindowInfo *win) {
-    if (!win)
-        return NULL;
-    const char *text = NULL;
-    if (win->class_name && *win->class_name)
-        text = win->class_name;
-    else if (win->initial_class && *win->initial_class)
-        text = win->initial_class;
-    else if (win->title && *win->title)
-        text = win->title;
-    if (!text || !*text)
-        return NULL;
-    return g_strdup(text);
-}
 
 void desperateOverview_ui_set_hover_window(WindowInfo *win) {
     if (!g_overlay_visible)
@@ -72,13 +59,7 @@ void desperateOverview_ui_set_hover_window(WindowInfo *win) {
     if (win == g_hover_window)
         return;
     g_hover_window = win;
-    if (g_status_label && GTK_IS_LABEL(g_status_label)) {
-        gchar *text = win ? build_window_hover_text(win) : NULL;
-        gtk_label_set_text(GTK_LABEL(g_status_label), text ? text : "");
-        g_free(text);
-    } else {
-        g_status_label = NULL;
-    }
+    desperateOverview_ui_queue_cells_redraw();
 }
 
 static gboolean drag_hold_timeout_cb(DragState *drag, gpointer data) {
@@ -217,6 +198,15 @@ gboolean desperateOverview_ui_on_cell_button_press(GtkWidget *widget, GdkEventBu
     desperateOverview_ui_cancel_drag_hold_timer();
     int wsid = resolve_workspace_id(data);
     WindowInfo *hit = hit_test_window_view(wsid, event->x, event->y);
+    if (hit && hit->close_btn_valid) {
+        double dx = event->x - hit->close_btn_cx;
+        double dy = event->y - hit->close_btn_cy;
+        double r  = hit->close_btn_r + 3.0;
+        if (dx * dx + dy * dy <= r * r) {
+            desperateOverview_core_close_window(hit->addr);
+            return TRUE;
+        }
+    }
     if (hit) {
         g_drag.active_window = hit;
         g_drag.source_workspace = wsid;

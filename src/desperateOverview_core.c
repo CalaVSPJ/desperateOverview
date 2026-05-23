@@ -76,6 +76,17 @@ void desperateOverview_core_move_window(const char *addr, int wsid) {
     desperateOverview_core_ipc_send_command(cmd);
 }
 
+void desperateOverview_core_close_window(const char *addr) {
+    if (!addr || !addr[0])
+        return;
+    char addr_clean[64];
+    snprintf(addr_clean, sizeof(addr_clean), "%s", addr);
+    desperateOverview_core_sanitize_addr(addr_clean);
+    char cmd[256];
+    snprintf(cmd, sizeof(cmd), "dispatch closewindow address:%s", addr_clean);
+    desperateOverview_core_ipc_send_command(cmd);
+}
+
 void desperateOverview_core_switch_workspace(const char *name, int wsid) {
     char cmd[200];
 
