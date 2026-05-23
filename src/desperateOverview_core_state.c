@@ -108,46 +108,78 @@ static void update_workspace_names(void) {
     ensure_workspace_name(g_active_ws);
 }
 
-static void update_monitor_geometry_from_doc(yyjson_doc *doc) {
-    yyjson_val *root = yyjson_doc_get_root(doc);
-    if (!yyjson_is_arr(root)) {
+static void apply_monitor_entry(yyjson_val *entry) {
+    int w = desperateOverview_json_get_int(yyjson_obj_get(entry, "width"),  g_mon_w);
+    int h = desperateOverview_json_get_int(yyjson_obj_get(entry, "height"), g_mon_h);
+    if (w <= 0 || h <= 0)
         return;
-    }
+    g_mon_id        = desperateOverview_json_get_int(yyjson_obj_get(entry, "id"),        g_mon_id);
+    g_mon_w         = w;
+    g_mon_h         = h;
+    g_mon_x         = desperateOverview_json_get_int(yyjson_obj_get(entry, "x"),         g_mon_x);
+    g_mon_y         = desperateOverview_json_get_int(yyjson_obj_get(entry, "y"),         g_mon_y);
+    g_mon_transform = desperateOverview_json_get_int(yyjson_obj_get(entry, "transform"), 0);
+    yyjson_val *name_v = yyjson_obj_get(entry, "name");
+    const char *n = (name_v && yyjson_is_str(name_v)) ? yyjson_get_str(name_v) : NULL;
+    if (n)
+        g_strlcpy(g_mon_name, n, sizeof(g_mon_name));
+}
+
+static void update_monitor_geometry_from_doc(yyjson_doc *doc, int cursor_x, int cursor_y) {
+    yyjson_val *root = yyjson_doc_get_root(doc);
+    if (!yyjson_is_arr(root))
+        return;
 
     yyjson_val *entry;
     size_t idx, max;
     bool found = false;
-    yyjson_arr_foreach(root, idx, max, entry) {
-        if (!desperateOverview_json_is_true(yyjson_obj_get(entry, "focused")))
-            continue;
 
-        int w = desperateOverview_json_get_int(yyjson_obj_get(entry, "width"), g_mon_w);
-        int h = desperateOverview_json_get_int(yyjson_obj_get(entry, "height"), g_mon_h);
-        if (w > 0 && h > 0) {
-            g_mon_id = desperateOverview_json_get_int(yyjson_obj_get(entry, "id"), g_mon_id);
-            g_mon_w  = w;
-            g_mon_h  = h;
-            g_mon_x  = desperateOverview_json_get_int(yyjson_obj_get(entry, "x"), g_mon_x);
-            g_mon_y  = desperateOverview_json_get_int(yyjson_obj_get(entry, "y"), g_mon_y);
-            g_mon_transform = desperateOverview_json_get_int(yyjson_obj_get(entry, "transform"), 0);
-            yyjson_val *name_v = yyjson_obj_get(entry, "name");
-            const char *n = (name_v && yyjson_is_str(name_v)) ? yyjson_get_str(name_v) : NULL;
-            if (n)
-                g_strlcpy(g_mon_name, n, sizeof(g_mon_name));
-            found = true;
-            break;
+    /* Prefer the monitor that contains the cursor. */
+    if (cursor_x >= 0 && cursor_y >= 0) {
+        yyjson_arr_foreach(root, idx, max, entry) {
+            int x  = desperateOverview_json_get_int(yyjson_obj_get(entry, "x"),  -1);
+            int y  = desperateOverview_json_get_int(yyjson_obj_get(entry, "y"),  -1);
+            int w  = desperateOverview_json_get_int(yyjson_obj_get(entry, "width"),  0);
+            int h  = desperateOverview_json_get_int(yyjson_obj_get(entry, "height"), 0);
+            int tr = desperateOverview_json_get_int(yyjson_obj_get(entry, "transform"), 0);
+            if (w <= 0 || h <= 0 || x < 0 || y < 0)
+                continue;
+            /* width/height in JSON are physical; swap for odd transforms. */
+            int eff_w = (tr % 2 == 0) ? w : h;
+            int eff_h = (tr % 2 == 0) ? h : w;
+            if (cursor_x >= x && cursor_x < x + eff_w &&
+                cursor_y >= y && cursor_y < y + eff_h) {
+                apply_monitor_entry(entry);
+                found = true;
+                break;
+            }
+        }
+    }
+
+    /* Fall back to the focused monitor if cursor didn't match. */
+    if (!found) {
+        yyjson_arr_foreach(root, idx, max, entry) {
+            if (!desperateOverview_json_is_true(yyjson_obj_get(entry, "focused")))
+                continue;
+            int w = desperateOverview_json_get_int(yyjson_obj_get(entry, "width"),  0);
+            int h = desperateOverview_json_get_int(yyjson_obj_get(entry, "height"), 0);
+            if (w > 0 && h > 0) {
+                apply_monitor_entry(entry);
+                found = true;
+                break;
+            }
         }
     }
 
     if (!found)
-        g_warning("desperateOverview: focused monitor not found in hyprctl output");
+        g_warning("desperateOverview: could not select a monitor");
 }
 
-static void update_monitor_geometry(void) {
+static void update_monitor_geometry(int cursor_x, int cursor_y) {
     yyjson_doc *doc = desperateOverview_read_json_from_cmd("hyprctl -j monitors 2>/dev/null");
     if (!doc)
         return;
-    update_monitor_geometry_from_doc(doc);
+    update_monitor_geometry_from_doc(doc, cursor_x, cursor_y);
     yyjson_doc_free(doc);
 }
 
@@ -297,25 +329,33 @@ static void update_workspace_windows(void) {
 
 void desperateOverview_core_state_refresh_full(void) {
     pthread_mutex_lock(&g_state_lock);
-    HyprctlFetchTask monitor_task = { .command = "hyprctl -j monitors 2>/dev/null", .doc = NULL, .started = false };
-    HyprctlFetchTask workspace_task = { .command = "hyprctl -j activeworkspace 2>/dev/null", .doc = NULL, .started = false };
-    HyprctlFetchTask clients_task = { .command = "hyprctl -j clients 2>/dev/null", .doc = NULL, .started = false };
+    HyprctlFetchTask monitor_task   = { .command = "hyprctl -j monitors 2>/dev/null",      .doc = NULL, .started = false };
+    HyprctlFetchTask workspace_task = { .command = "hyprctl -j activeworkspace 2>/dev/null",.doc = NULL, .started = false };
+    HyprctlFetchTask clients_task   = { .command = "hyprctl -j clients 2>/dev/null",        .doc = NULL, .started = false };
+    HyprctlFetchTask cursor_task    = { .command = "hyprctl -j cursorpos 2>/dev/null",      .doc = NULL, .started = false };
 
-    pthread_t monitor_thread, workspace_thread, clients_thread;
+    pthread_t monitor_thread, workspace_thread, clients_thread, cursor_thread;
 
-    if (pthread_create(&monitor_thread, NULL, hyprctl_fetch_thread, &monitor_task) == 0)
-        monitor_task.started = true;
-    if (pthread_create(&workspace_thread, NULL, hyprctl_fetch_thread, &workspace_task) == 0)
-        workspace_task.started = true;
-    if (pthread_create(&clients_thread, NULL, hyprctl_fetch_thread, &clients_task) == 0)
-        clients_task.started = true;
+    if (pthread_create(&monitor_thread,   NULL, hyprctl_fetch_thread, &monitor_task)   == 0) monitor_task.started   = true;
+    if (pthread_create(&workspace_thread, NULL, hyprctl_fetch_thread, &workspace_task) == 0) workspace_task.started = true;
+    if (pthread_create(&clients_thread,   NULL, hyprctl_fetch_thread, &clients_task)   == 0) clients_task.started   = true;
+    if (pthread_create(&cursor_thread,    NULL, hyprctl_fetch_thread, &cursor_task)    == 0) cursor_task.started    = true;
 
-    if (workspace_task.started)
-        pthread_join(workspace_thread, NULL);
-    if (monitor_task.started)
-        pthread_join(monitor_thread, NULL);
-    if (clients_task.started)
-        pthread_join(clients_thread, NULL);
+    if (workspace_task.started) pthread_join(workspace_thread, NULL);
+    if (monitor_task.started)   pthread_join(monitor_thread,   NULL);
+    if (clients_task.started)   pthread_join(clients_thread,   NULL);
+    if (cursor_task.started)    pthread_join(cursor_thread,    NULL);
+
+    /* Parse cursor position; use -1 sentinels to indicate unavailable. */
+    int cursor_x = -1, cursor_y = -1;
+    if (cursor_task.doc) {
+        yyjson_val *root = yyjson_doc_get_root(cursor_task.doc);
+        if (yyjson_is_obj(root)) {
+            cursor_x = desperateOverview_json_get_int(yyjson_obj_get(root, "x"), -1);
+            cursor_y = desperateOverview_json_get_int(yyjson_obj_get(root, "y"), -1);
+        }
+        yyjson_doc_free(cursor_task.doc);
+    }
 
     if (workspace_task.doc)
         update_active_workspace_from_doc(workspace_task.doc);
@@ -323,21 +363,18 @@ void desperateOverview_core_state_refresh_full(void) {
         update_active_workspace();
 
     if (monitor_task.doc)
-        update_monitor_geometry_from_doc(monitor_task.doc);
+        update_monitor_geometry_from_doc(monitor_task.doc, cursor_x, cursor_y);
     else
-        update_monitor_geometry();
+        update_monitor_geometry(cursor_x, cursor_y);
 
     if (clients_task.doc)
         update_workspace_windows_from_doc(clients_task.doc);
     else
         update_workspace_windows();
 
-    if (workspace_task.doc)
-        yyjson_doc_free(workspace_task.doc);
-    if (monitor_task.doc)
-        yyjson_doc_free(monitor_task.doc);
-    if (clients_task.doc)
-        yyjson_doc_free(clients_task.doc);
+    if (workspace_task.doc) yyjson_doc_free(workspace_task.doc);
+    if (monitor_task.doc)   yyjson_doc_free(monitor_task.doc);
+    if (clients_task.doc)   yyjson_doc_free(clients_task.doc);
 
     g_state_dirty = !g_capture_enabled;
     pthread_mutex_unlock(&g_state_lock);
