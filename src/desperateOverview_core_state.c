@@ -327,6 +327,35 @@ static void update_workspace_windows(void) {
     yyjson_doc_free(doc);
 }
 
+void desperateOverview_core_state_refresh_monitor_geometry(void) {
+    HyprctlFetchTask monitor_task = { .command = "hyprctl -j monitors 2>/dev/null",  .doc = NULL, .started = false };
+    HyprctlFetchTask cursor_task  = { .command = "hyprctl -j cursorpos 2>/dev/null", .doc = NULL, .started = false };
+    pthread_t monitor_thread, cursor_thread;
+
+    if (pthread_create(&monitor_thread, NULL, hyprctl_fetch_thread, &monitor_task) == 0) monitor_task.started = true;
+    if (pthread_create(&cursor_thread,  NULL, hyprctl_fetch_thread, &cursor_task)  == 0) cursor_task.started  = true;
+    if (monitor_task.started) pthread_join(monitor_thread, NULL);
+    if (cursor_task.started)  pthread_join(cursor_thread,  NULL);
+
+    int cursor_x = -1, cursor_y = -1;
+    if (cursor_task.doc) {
+        yyjson_val *root = yyjson_doc_get_root(cursor_task.doc);
+        if (yyjson_is_obj(root)) {
+            cursor_x = desperateOverview_json_get_int(yyjson_obj_get(root, "x"), -1);
+            cursor_y = desperateOverview_json_get_int(yyjson_obj_get(root, "y"), -1);
+        }
+        yyjson_doc_free(cursor_task.doc);
+    }
+
+    pthread_mutex_lock(&g_state_lock);
+    if (monitor_task.doc)
+        update_monitor_geometry_from_doc(monitor_task.doc, cursor_x, cursor_y);
+    else
+        update_monitor_geometry(cursor_x, cursor_y);
+    if (monitor_task.doc) yyjson_doc_free(monitor_task.doc);
+    pthread_mutex_unlock(&g_state_lock);
+}
+
 void desperateOverview_core_state_refresh_full(void) {
     pthread_mutex_lock(&g_state_lock);
     HyprctlFetchTask monitor_task   = { .command = "hyprctl -j monitors 2>/dev/null",      .doc = NULL, .started = false };

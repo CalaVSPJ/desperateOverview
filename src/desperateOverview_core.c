@@ -116,6 +116,10 @@ char *desperateOverview_core_capture_window_raw(const char *addr) {
     return capture_window_ppm_base64_with_limit(addr_clean, 0);
 }
 
+void desperateOverview_core_request_monitor_refresh(void) {
+    desperateOverview_core_state_refresh_monitor_geometry();
+}
+
 void desperateOverview_core_request_full_refresh(void) {
     desperateOverview_core_state_refresh_full();
     core_request_redraw();

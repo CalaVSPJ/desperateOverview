@@ -256,6 +256,7 @@ static gboolean show_overlay_idle(gpointer data) {
         return G_SOURCE_REMOVE;
     config_reload();
     desperateOverview_core_set_thumbnail_capture_enabled(true);
+    desperateOverview_core_request_monitor_refresh();
     copy_core_state_to_ui(TRUE);
     reset_interaction_state();
     g_overlay_window = build_overlay_window();
