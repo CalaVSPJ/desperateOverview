@@ -6,6 +6,7 @@
 #include <string.h>
 #include <gdk-pixbuf/gdk-pixbuf.h>
 
+#include "desperateOverview_config.h"
 #include "desperateOverview_core.h"
 #include "desperateOverview_thumbnail_capture.h"
 
@@ -115,11 +116,16 @@ void desperateOverview_ui_build_live_previews(WorkspaceWindows workspaces[]) {
     if (!workspaces)
         return;
 
-    WindowInfo *targets[9 * MAX_WINS_PER_WS];
+    const OverlayConfig *cfg = config_get();
+
+    WindowInfo *targets[MAX_WS * MAX_WINS_PER_WS];
     int target_count = 0;
     int cap = (int)(sizeof(targets) / sizeof(targets[0]));
 
-    for (int wsid = 1; wsid <= 9; ++wsid) {
+    for (guint slot = 0; slot < cfg->workspace_count; ++slot) {
+        int wsid = cfg->workspace_ids[slot];
+        if (wsid <= 0 || wsid >= MAX_WS)
+            continue;
         WorkspaceWindows *W = &workspaces[wsid];
         for (int i = 0; i < W->count && target_count < cap; ++i) {
             WindowInfo *win = &W->wins[i];

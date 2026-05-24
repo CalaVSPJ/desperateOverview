@@ -45,6 +45,28 @@ static pthread_mutex_t g_state_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool g_capture_enabled = true;
 static bool g_state_dirty = true;
 
+static pthread_mutex_t g_monitor_target_lock = PTHREAD_MUTEX_INITIALIZER;
+static CoreMonitorTargetMode g_monitor_target_mode = CORE_MONITOR_TARGET_CURSOR;
+static char g_monitor_target_name[64] = {0};
+
+void desperateOverview_core_set_monitor_target(CoreMonitorTargetMode mode, const char *name) {
+    pthread_mutex_lock(&g_monitor_target_lock);
+    g_monitor_target_mode = mode;
+    if (name && *name)
+        g_strlcpy(g_monitor_target_name, name, sizeof(g_monitor_target_name));
+    else
+        g_monitor_target_name[0] = '\0';
+    pthread_mutex_unlock(&g_monitor_target_lock);
+}
+
+static void snapshot_monitor_target(CoreMonitorTargetMode *mode, char *name_out, size_t name_cap) {
+    pthread_mutex_lock(&g_monitor_target_lock);
+    *mode = g_monitor_target_mode;
+    if (name_out && name_cap > 0)
+        g_strlcpy(name_out, g_monitor_target_name, name_cap);
+    pthread_mutex_unlock(&g_monitor_target_lock);
+}
+
 static void free_window(WindowInfo *win) {
     if (!win)
         return;
@@ -130,12 +152,33 @@ static void update_monitor_geometry_from_doc(yyjson_doc *doc, int cursor_x, int 
     if (!yyjson_is_arr(root))
         return;
 
+    CoreMonitorTargetMode mode;
+    char target_name[64];
+    snapshot_monitor_target(&mode, target_name, sizeof(target_name));
+
     yyjson_val *entry;
     size_t idx, max;
     bool found = false;
 
-    /* Prefer the monitor that contains the cursor. */
-    if (cursor_x >= 0 && cursor_y >= 0) {
+    /* Named-output mode: match the exact monitor name first. */
+    if (mode == CORE_MONITOR_TARGET_NAMED && target_name[0]) {
+        yyjson_arr_foreach(root, idx, max, entry) {
+            yyjson_val *name_v = yyjson_obj_get(entry, "name");
+            const char *n = (name_v && yyjson_is_str(name_v)) ? yyjson_get_str(name_v) : NULL;
+            if (!n || strcmp(n, target_name) != 0)
+                continue;
+            int w = desperateOverview_json_get_int(yyjson_obj_get(entry, "width"),  0);
+            int h = desperateOverview_json_get_int(yyjson_obj_get(entry, "height"), 0);
+            if (w <= 0 || h <= 0)
+                continue;
+            apply_monitor_entry(entry);
+            found = true;
+            break;
+        }
+    }
+
+    /* Cursor mode: prefer the monitor that contains the cursor. */
+    if (!found && mode == CORE_MONITOR_TARGET_CURSOR && cursor_x >= 0 && cursor_y >= 0) {
         yyjson_arr_foreach(root, idx, max, entry) {
             int x  = desperateOverview_json_get_int(yyjson_obj_get(entry, "x"),  -1);
             int y  = desperateOverview_json_get_int(yyjson_obj_get(entry, "y"),  -1);
@@ -156,7 +199,7 @@ static void update_monitor_geometry_from_doc(yyjson_doc *doc, int cursor_x, int 
         }
     }
 
-    /* Fall back to the focused monitor if cursor didn't match. */
+    /* Universal fallback: the focused monitor. */
     if (!found) {
         yyjson_arr_foreach(root, idx, max, entry) {
             if (!desperateOverview_json_is_true(yyjson_obj_get(entry, "focused")))

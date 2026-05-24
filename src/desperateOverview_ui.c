@@ -19,16 +19,11 @@
 #include "desperateOverview_ui_drag.h"
 #include "desperateOverview_ui_drawing.h"
 #include "desperateOverview_ui_live.h"
-#include "desperateOverview_ui_css.h"
 #include "desperateOverview_ui_state.h"
 #include "desperateOverview_ui_thumb_cache.h"
 #include "desperateOverview_ui_events.h"
 #include "desperateOverview_ui_render.h"
 #include "desperateOverview_ui.h"
-
-void desperateOverview_ui_set_css_override(const char *path) {
-    desperateOverview_css_set_override(path);
-}
 
 static void reset_interaction_state(void);
 static void *live_previews_bg_thread(void *data);
@@ -464,7 +459,6 @@ void desperateOverview_ui_init(const char *config_path) {
     clear_ui_state();
     reset_interaction_state();
     config_init(config_path);
-    desperateOverview_css_init();
     desperateOverview_thumb_cache_init();
     desperateOverview_core_set_thumbnail_capture_enabled(false);
 }
@@ -473,7 +467,6 @@ void desperateOverview_ui_shutdown(void) {
     close_overlay();
     clear_ui_state();
     config_shutdown();
-    desperateOverview_css_shutdown();
     desperateOverview_thumb_cache_shutdown();
     g_mutex_clear(&g_redraw_lock);
 }
@@ -497,9 +490,4 @@ void desperateOverview_ui_request_quit(void) {
 void desperateOverview_ui_set_exit_on_hide(bool enabled) {
     g_exit_on_hide = enabled ? TRUE : FALSE;
 }
-
-bool desperateOverview_ui_is_visible(void) {
-    return g_overlay_visible;
-}
-
 

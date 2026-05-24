@@ -49,8 +49,11 @@ when invoking `make`.
 ## Configuration
 
 A user-specific config file can live at `~/.config/desperateOverview/config.ini`
-(or pass `--config /path/to/file`). See `docs/config.example.ini` for the full set
-of keys. Relevant behavioral settings include:
+(or pass `--config /path/to/file`). See `docs/config.example.ini` for the full
+set of keys; `make install` also drops it at
+`$(PREFIX)/share/desperateOverview/config.example.ini`.
+
+Behavioral keys include:
 
 - `drag_hold_delay_ms` – delay (ms) before a click starts a drag
 - `thumbnail_thread_count` – worker threads for thumbnail decoding
@@ -58,6 +61,38 @@ of keys. Relevant behavioral settings include:
   dragged window was dropped onto (and issues a Hyprland workspace switch).
 - `fade_step` – opacity increment applied every 16 ms during overlay fade-in
   (lower values slow the animation, higher values make it snappier).
+- `monitor` – which Hyprland monitor the overlay tracks: `cursor` (default,
+  follow the cursor), `focused` (Hyprland's focused output), or an explicit
+  output name like `DP-1` / `eDP-1`.
+
+Layout keys (defaults match the prior hard-coded 3×3 / nine-workspace grid):
+
+- `rows`, `cols` – grid dimensions. e.g. `rows = 2`, `cols = 5` for a 2×5 grid.
+- `workspaces` – comma-separated list of Hyprland workspace IDs to show, in
+  row-major order. Defaults to `1..(rows*cols)` if omitted. Useful for skipping
+  or reordering workspaces.
+
+## Running
+
+```sh
+desperateOverview                 # same as --show: open the overlay, exit when dismissed
+desperateOverview --toggle        # dismiss a showing overlay, or open one if none is up
+desperateOverview --hide          # dismiss a showing overlay (no-op if none)
+desperateOverview --help          # full option list
+```
+
+There is no long-running daemon: every invocation either spawns a fresh
+one-shot overlay or talks to one that's already showing via a per-user
+Unix socket at `$XDG_RUNTIME_DIR/desp_overview.sock`.
+
+Example Hyprland keybind (in `~/.config/hypr/hyprland.conf`):
+
+```conf
+bind = SUPER, TAB, exec, desperateOverview --toggle
+```
+
+`scripts/toggle-overview.sh` is a thin wrapper around `--toggle` for setups
+that prefer to keybind a script rather than the binary directly.
 
 ## Vendored Wayland protocols
 
@@ -84,11 +119,10 @@ This script requires both `curl` (when fetching) and `wayland-scanner`.
 
 ## Development notes
 
-- `docs/overview_app_design.md` contains a high-level description of the UI
-  architecture, shared state, and event handling.
 - `protocols/` holds the XML sources for the custom Wayland protocols as well
   as the update script mentioned above.
-- `scripts/` contains maintenance helpers (currently only the protocol updater).
+- `scripts/` contains `toggle-overview.sh` (thin `--toggle` wrapper) and
+  `update_protocols.sh` (regenerate Wayland protocol bindings).
 
 Feel free to open issues or PRs for build regressions, packaging changes, or
 code cleanups. Contributions are welcome!

@@ -9,34 +9,40 @@
 #include "desperateOverview_ui_render.h"
 #include "desperateOverview_ui_events.h"
 
-#define GRID_COLS     3
-#define GRID_ROWS     3
-#define GRID_WS_COUNT 9
-
-static const double GRID_MARGIN = 12.0;
-static const double GRID_GAP    = 8.0;
-
 void desperateOverview_ui_build_overlay_content(GtkWidget *root_box) {
     if (!root_box)
         return;
+
+    const OverlayConfig *cfg = config_get();
+    int grid_cols = (int)cfg->grid_cols;
+    if (grid_cols <= 0) grid_cols = 1;
+
+    int margin = (int)cfg->grid_margin;
+    int gap    = (int)cfg->grid_gap;
 
     GtkWidget *grid = gtk_grid_new();
     g_overlay_content = grid;
     gtk_grid_set_row_homogeneous(GTK_GRID(grid), TRUE);
     gtk_grid_set_column_homogeneous(GTK_GRID(grid), TRUE);
-    gtk_grid_set_row_spacing(GTK_GRID(grid), (int)GRID_GAP);
-    gtk_grid_set_column_spacing(GTK_GRID(grid), (int)GRID_GAP);
-    gtk_widget_set_margin_start(grid, (int)GRID_MARGIN);
-    gtk_widget_set_margin_end(grid, (int)GRID_MARGIN);
-    gtk_widget_set_margin_top(grid, (int)GRID_MARGIN);
-    gtk_widget_set_margin_bottom(grid, (int)GRID_MARGIN);
+    gtk_grid_set_row_spacing(GTK_GRID(grid), gap);
+    gtk_grid_set_column_spacing(GTK_GRID(grid), gap);
+    gtk_widget_set_margin_start(grid, margin);
+    gtk_widget_set_margin_end(grid, margin);
+    gtk_widget_set_margin_top(grid, margin);
+    gtk_widget_set_margin_bottom(grid, margin);
     gtk_widget_set_hexpand(grid, TRUE);
     gtk_widget_set_vexpand(grid, TRUE);
     gtk_box_pack_start(GTK_BOX(root_box), grid, TRUE, TRUE, 0);
 
-    for (int wsid = 1; wsid <= GRID_WS_COUNT; ++wsid) {
-        int col = (wsid - 1) % GRID_COLS;
-        int row = (wsid - 1) / GRID_COLS;
+    for (int i = 0; i < MAX_WS; ++i)
+        g_cells[i] = NULL;
+
+    for (guint slot = 0; slot < cfg->workspace_count; ++slot) {
+        int wsid = cfg->workspace_ids[slot];
+        if (wsid <= 0 || wsid >= MAX_WS)
+            continue;
+        int col = (int)slot % grid_cols;
+        int row = (int)slot / grid_cols;
 
         GtkWidget *cell = gtk_drawing_area_new();
         g_cells[wsid] = cell;
@@ -80,8 +86,4 @@ void desperateOverview_ui_build_overlay_content(GtkWidget *root_box) {
 
         gtk_grid_attach(GTK_GRID(grid), cell, col, row, 1, 1);
     }
-
-    g_cells[0] = NULL;
-    for (int j = GRID_WS_COUNT + 1; j < MAX_WS; ++j)
-        g_cells[j] = NULL;
 }

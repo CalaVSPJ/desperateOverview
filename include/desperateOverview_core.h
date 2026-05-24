@@ -57,6 +57,19 @@ void desperateOverview_core_request_full_refresh(void);
 void desperateOverview_core_request_monitor_refresh(void);
 bool desperateOverview_core_state_needs_refresh(void);
 
+/* Monitor selection strategy. Determines which Hyprland monitor the
+ * overlay tracks when fetching workspace geometry and windows. */
+typedef enum {
+    CORE_MONITOR_TARGET_CURSOR  = 0, /* monitor under the cursor; fall back to focused */
+    CORE_MONITOR_TARGET_FOCUSED = 1, /* whichever monitor Hyprland reports as focused */
+    CORE_MONITOR_TARGET_NAMED   = 2  /* a specific output name; fall back to focused if not present */
+} CoreMonitorTargetMode;
+
+/* `name` is only consulted when mode == CORE_MONITOR_TARGET_NAMED.
+ * Pass NULL or "" to clear a previously-set name. Thread-safe; callable
+ * before or after desperateOverview_core_init. */
+void desperateOverview_core_set_monitor_target(CoreMonitorTargetMode mode, const char *name);
+
 #ifdef __cplusplus
 }
 #endif

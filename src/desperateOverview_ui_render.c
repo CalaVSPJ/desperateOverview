@@ -9,10 +9,9 @@
 #include "desperateOverview_ui_drawing.h"
 #include "desperateOverview_ui_state.h"
 
-static const double G_WINDOW_BORDER_WIDTH      = 2.0;
-static const double G_WINDOW_BORDER_HOVER_W    = 2.5;
-static const double G_CLOSE_BTN_RADIUS         = 13.0;
-static const double G_CLOSE_BTN_RADIUS_SMALL   = 9.0;
+/* These visual dimensions are now sourced from OverlayConfig (see
+ * window_border_width / close_button_radius_* / etc.). Read them through
+ * config_get() at draw time so /config edits take effect on the next show. */
 
 GdkPixbuf *desperateOverview_ui_orient_pixbuf(GdkPixbuf *src) {
     if (!src)
@@ -66,7 +65,7 @@ static void draw_window_preview(cairo_t *cr,
 
     /* Border: highlight when hovered, normal otherwise. */
     {
-        double bw = is_hovered ? G_WINDOW_BORDER_HOVER_W : G_WINDOW_BORDER_WIDTH;
+        double bw = is_hovered ? cfg->window_border_hover_width : cfg->window_border_width;
         cairo_save(cr);
         cairo_set_fill_rule(cr, CAIRO_FILL_RULE_EVEN_ODD);
         cairo_add_rounded_rect(cr, rx, ry, rw, rh, cfg->window_corner_radius);
@@ -81,7 +80,7 @@ static void draw_window_preview(cairo_t *cr,
     }
 
     /* Content: thumbnail or placeholder drawn inside the inner area. */
-    double bw = is_hovered ? G_WINDOW_BORDER_HOVER_W : G_WINDOW_BORDER_WIDTH;
+    double bw = is_hovered ? cfg->window_border_hover_width : cfg->window_border_width;
     double ix = rx + bw;
     double iy = ry + bw;
     double iw = rw - 2.0 * bw;
@@ -162,7 +161,7 @@ static void draw_window_preview(cairo_t *cr,
 
     /* Close button in top-right corner when hovered. */
     if (is_hovered) {
-        double btn_r = (fmin(rw, rh) < 40.0) ? G_CLOSE_BTN_RADIUS_SMALL : G_CLOSE_BTN_RADIUS;
+        double btn_r = (fmin(rw, rh) < 40.0) ? cfg->close_button_radius_small : cfg->close_button_radius;
         double btn_cx = rx + btn_r + 3.0;
         double btn_cy = ry + btn_r + 3.0;
 

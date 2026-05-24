@@ -38,7 +38,9 @@ static WindowInfo *hit_test_window_view(int wsid, double px, double py) {
         return NULL;
 
     WorkspaceWindows *W = &g_ws[wsid];
-    for (int i = 0; i < W->count; ++i) {
+    /* Iterate in reverse so the topmost-drawn (last in list) window wins
+     * when floating windows overlap tiled ones. */
+    for (int i = W->count - 1; i >= 0; --i) {
         WindowInfo *win = &W->wins[i];
         if (!win->top_preview_valid)
             continue;
@@ -374,7 +376,7 @@ gboolean desperateOverview_ui_on_key(GtkWidget *widget, GdkEventKey *event, gpoi
     }
 
     if (event->keyval == GDK_KEY_Return || event->keyval == GDK_KEY_KP_Enter) {
-        if (g_active_workspace >= 1 && g_active_workspace <= 9) {
+        if (config_workspace_slot(g_active_workspace) >= 0) {
             close_overlay();
             desperateOverview_core_switch_workspace(
                 desperateOverview_ui_workspace_display_name(g_active_workspace),
@@ -383,34 +385,57 @@ gboolean desperateOverview_ui_on_key(GtkWidget *widget, GdkEventKey *event, gpoi
         return TRUE;
     }
 
-    int ws = g_active_workspace;
-    if (ws < 1 || ws > 9) ws = 1;
-    int row = (ws - 1) / 3;
-    int col = (ws - 1) % 3;
+    const OverlayConfig *cfg = config_get();
+    int rows = (int)cfg->grid_rows;
+    int cols = (int)cfg->grid_cols;
+    if (rows <= 0 || cols <= 0 || cfg->workspace_count == 0)
+        return FALSE;
+
     int target_ws = -1;
 
+    /* 1..9 jump keys map to the first nine configured slots. */
     if (event->keyval >= GDK_KEY_1 && event->keyval <= GDK_KEY_9) {
-        target_ws = (int)(event->keyval - GDK_KEY_1) + 1;
+        int slot = (int)(event->keyval - GDK_KEY_1);
+        target_ws = config_workspace_at_slot(slot);
     } else {
+        int drow = 0, dcol = 0;
         switch (event->keyval) {
-            case GDK_KEY_Left:  case GDK_KEY_KP_Left:
-                target_ws = row * 3 + (col + 2) % 3 + 1;
-                break;
-            case GDK_KEY_Right: case GDK_KEY_KP_Right:
-                target_ws = row * 3 + (col + 1) % 3 + 1;
-                break;
-            case GDK_KEY_Up:    case GDK_KEY_KP_Up:
-                target_ws = ((row + 2) % 3) * 3 + col + 1;
-                break;
-            case GDK_KEY_Down:  case GDK_KEY_KP_Down:
-                target_ws = ((row + 1) % 3) * 3 + col + 1;
-                break;
-            default:
-                break;
+            case GDK_KEY_Left:  case GDK_KEY_KP_Left:  dcol = -1; break;
+            case GDK_KEY_Right: case GDK_KEY_KP_Right: dcol = +1; break;
+            case GDK_KEY_Up:    case GDK_KEY_KP_Up:    drow = -1; break;
+            case GDK_KEY_Down:  case GDK_KEY_KP_Down:  drow = +1; break;
+            default:                                              return FALSE;
         }
+
+        int start_slot = config_workspace_slot(g_active_workspace);
+        if (start_slot < 0)
+            start_slot = 0;
+        int row = start_slot / cols;
+        int col = start_slot % cols;
+
+        /* Walk in the requested direction, skipping unpopulated slots so
+         * grids that aren't full rectangles (e.g. 7 workspaces in a 2x5
+         * grid) still wrap intuitively. Give up if we loop back to where
+         * we started — that only happens when there's no other populated
+         * slot reachable along this axis. */
+        int new_slot = start_slot;
+        for (int steps = 0; steps < rows * cols; ++steps) {
+            row = (row + drow + rows) % rows;
+            col = (col + dcol + cols) % cols;
+            int candidate = row * cols + col;
+            if (candidate == start_slot)
+                break;
+            if (config_workspace_at_slot(candidate) > 0) {
+                new_slot = candidate;
+                break;
+            }
+        }
+        target_ws = config_workspace_at_slot(new_slot);
+        if (target_ws <= 0)
+            return TRUE;
     }
 
-    if (target_ws >= 1 && target_ws <= 9) {
+    if (target_ws > 0 && target_ws < MAX_WS) {
         g_active_workspace = target_ws;
         desperateOverview_ui_set_hover_window(NULL);
         desperateOverview_ui_queue_cells_redraw();

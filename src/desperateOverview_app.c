@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <pthread.h>
 
+#include "desperateOverview_config.h"
 #include "desperateOverview_core.h"
 #include "desperateOverview_ui.h"
 
@@ -20,10 +21,35 @@ static bool g_control_thread_running = false;
 static char g_control_sock_path[256];
 static char g_cli_config_path[PATH_MAX];
 static bool g_cli_config_path_set = false;
-static char g_cli_css_path[PATH_MAX];
-static bool g_cli_css_path_set = false;
 
 #define CONTROL_SOCKET_PATH_FMT "/run/user/%d/desp_overview.sock"
+
+#ifndef DESPERATEOVERVIEW_VERSION
+#define DESPERATEOVERVIEW_VERSION "0.0.0-dev"
+#endif
+
+static void print_usage(FILE *out) {
+    fprintf(out,
+        "Usage: desperateOverview [options]\n"
+        "\n"
+        "Hyprland workspace overlay with live window thumbnails.\n"
+        "Each invocation either shows a one-shot overlay or talks to one\n"
+        "that is already showing; no long-running daemon is required.\n"
+        "\n"
+        "Modes:\n"
+        "  --show              Show the overlay (default if no mode flag is given).\n"
+        "                      If another instance is already showing, exits silently.\n"
+        "  --toggle            If an instance is showing, dismiss it. Otherwise show one.\n"
+        "  --hide, --quit      Dismiss the running overlay; no-op if none.\n"
+        "\n"
+        "Options:\n"
+        "  --config <path>     Use the given INI config file.\n"
+        "                      Default: $XDG_CONFIG_HOME/desperateOverview/config.ini\n"
+        "  -h, --help          Show this help and exit.\n"
+        "  -V, --version       Print version and exit.\n"
+        "\n"
+        "See docs/config.example.ini for the full set of config keys.\n");
+}
 
 static int start_control_server(void);
 static void stop_control_server(void);
@@ -31,20 +57,16 @@ static void *control_server_thread(void *data);
 static void handle_control_command(const char *cmd);
 static bool send_command(const char *cmd);
 
+/* The control socket only carries one real command in the no-daemon model:
+ * "QUIT" (also accepted as "HIDE", since dismissing the one-shot overlay
+ * means the process exits). Empty payloads are tolerated so that callers
+ * can use the socket purely as a presence probe. */
 static void handle_control_command(const char *cmd) {
     if (!cmd || !*cmd)
         return;
 
-    if (g_ascii_strcasecmp(cmd, "SHOW") == 0) {
-        desperateOverview_ui_request_show();
-    } else if (g_ascii_strcasecmp(cmd, "HIDE") == 0) {
-        desperateOverview_ui_request_hide();
-    } else if (g_ascii_strcasecmp(cmd, "TOGGLE") == 0) {
-        if (desperateOverview_ui_is_visible())
-            desperateOverview_ui_request_hide();
-        else
-            desperateOverview_ui_request_show();
-    } else if (g_ascii_strcasecmp(cmd, "QUIT") == 0) {
+    if (g_ascii_strcasecmp(cmd, "QUIT") == 0 ||
+        g_ascii_strcasecmp(cmd, "HIDE") == 0) {
         desperateOverview_ui_request_hide();
         desperateOverview_ui_request_quit();
     }
@@ -160,58 +182,79 @@ static bool send_command(const char *cmd) {
 }
 
 int main(int argc, char **argv) {
-    bool force_show_on_start = false;
-    bool skip_notify = false;
-    bool oneshot_mode = false;
+    enum { MODE_SHOW, MODE_TOGGLE, MODE_HIDE } mode = MODE_SHOW;
 
     for (int i = 1; i < argc; ++i) {
-        if (strcmp(argv[i], "--config") == 0) {
+        if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            print_usage(stdout);
+            return 0;
+        } else if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-V") == 0) {
+            printf("desperateOverview %s\n", DESPERATEOVERVIEW_VERSION);
+            return 0;
+        } else if (strcmp(argv[i], "--config") == 0) {
             if (i + 1 >= argc) {
-                            fprintf(stderr, "desperateOverview: --config requires a file path\n");
+                fprintf(stderr, "desperateOverview: --config requires a file path\n");
                 return 1;
             }
             snprintf(g_cli_config_path, sizeof(g_cli_config_path), "%s", argv[i + 1]);
             g_cli_config_path_set = true;
             ++i;
-        } else if (strcmp(argv[i], "--css") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "desperateOverview: --css requires a file path\n");
-                return 1;
-            }
-            snprintf(g_cli_css_path, sizeof(g_cli_css_path), "%s", argv[i + 1]);
-            g_cli_css_path_set = true;
-            ++i;
-        } else if (strcmp(argv[i], "--toggle") == 0) {
-            if (send_command("TOGGLE"))
-                return 0;
-            fprintf(stderr, "desperateOverview: no running instance, starting new overlay.\n");
-            force_show_on_start = true;
-            skip_notify = true;
         } else if (strcmp(argv[i], "--show") == 0) {
-            oneshot_mode = true;
-            force_show_on_start = true;
-            skip_notify = true;
-        } else if (strcmp(argv[i], "--hide") == 0) {
-            return send_command("QUIT") ? 0 : 1;
-        } else if (strcmp(argv[i], "--quit") == 0) {
-            return send_command("QUIT") ? 0 : 1;
+            mode = MODE_SHOW;
+        } else if (strcmp(argv[i], "--toggle") == 0) {
+            mode = MODE_TOGGLE;
+        } else if (strcmp(argv[i], "--hide") == 0 || strcmp(argv[i], "--quit") == 0) {
+            mode = MODE_HIDE;
         } else {
-            fprintf(stderr, "Unknown option: %s\n", argv[i]);
+            fprintf(stderr, "desperateOverview: unknown option '%s'. Try --help.\n",
+                    argv[i]);
             return 1;
         }
     }
 
-    if (!skip_notify && send_command("SHOW"))
-        return 0;
+    /* No daemon: each invocation either starts a one-shot overlay or
+     * talks to one that's already showing via its control socket. */
+    switch (mode) {
+        case MODE_HIDE:
+            /* No-op if nothing's running; the call's failure is silent. */
+            send_command("QUIT");
+            return 0;
+        case MODE_TOGGLE:
+            /* If an instance is showing, dismiss it and exit. Otherwise
+             * fall through and start a fresh one. */
+            if (send_command("QUIT"))
+                return 0;
+            break;
+        case MODE_SHOW:
+            /* If an instance is already showing, don't disturb it. Empty
+             * payload is a no-op on the receiver but still proves liveness. */
+            if (send_command(""))
+                return 0;
+            break;
+    }
 
     gtk_init(&argc, &argv);
     const char *config_path = g_cli_config_path_set ? g_cli_config_path : NULL;
-    if (g_cli_css_path_set)
-        desperateOverview_ui_set_css_override(g_cli_css_path);
     desperateOverview_ui_init(config_path);
 
-    if (oneshot_mode)
-        desperateOverview_ui_set_exit_on_hide(true);
+    {
+        /* desperateOverview_ui_init() has already invoked config_init(),
+         * so config_get() is valid here. Push the monitor selection into
+         * the core layer before its first refresh. */
+        const OverlayConfig *cfg = config_get();
+        const char *t = cfg->monitor_target;
+        if (!t || !*t || g_ascii_strcasecmp(t, "cursor") == 0) {
+            desperateOverview_core_set_monitor_target(CORE_MONITOR_TARGET_CURSOR, NULL);
+        } else if (g_ascii_strcasecmp(t, "focused") == 0) {
+            desperateOverview_core_set_monitor_target(CORE_MONITOR_TARGET_FOCUSED, NULL);
+        } else {
+            desperateOverview_core_set_monitor_target(CORE_MONITOR_TARGET_NAMED, t);
+        }
+    }
+
+    /* The overlay always exits when it's hidden; there's no daemon to fall
+     * back to. */
+    desperateOverview_ui_set_exit_on_hide(true);
 
     if (desperateOverview_core_init(desperateOverview_ui_core_redraw_callback, NULL) != 0) {
         desperateOverview_ui_shutdown();
@@ -219,18 +262,15 @@ int main(int argc, char **argv) {
     }
     desperateOverview_ui_sync_with_core();
 
-    bool control_server_started = false;
-    if (!oneshot_mode) {
-        if (start_control_server() != 0) {
-            desperateOverview_core_shutdown();
-            desperateOverview_ui_shutdown();
-            return 1;
-        }
-        control_server_started = true;
-    }
+    /* Socket failure is non-fatal: the overlay still works, you just can't
+     * tell it to quit from another invocation (Escape / outside-click /
+     * SIGTERM still dismiss it). */
+    bool control_server_started = (start_control_server() == 0);
+    if (!control_server_started)
+        fprintf(stderr, "desperateOverview: control socket unavailable; "
+                        "--toggle and --hide from other invocations will not work.\n");
 
-    if (force_show_on_start)
-        desperateOverview_ui_request_show();
+    desperateOverview_ui_request_show();
 
     gtk_main();
 
